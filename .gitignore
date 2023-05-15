@@ -1,0 +1,11 @@
+/project/lib
+/project/project
+/project/target
+/project/build.properties
+/build
+/target
+.bsp
+.bloop
+.metals
+.#
+.scala-build

@@ -35,10 +35,12 @@ package object lisp { import pc._
     .reject { case c if wsChars contains c  => "can't contain whitespace" }
   val symP: Parser[Sym] = symCP
     .reject { case c if c >= '0' && c <= '9' => "can't start with number" }
+    .reject { case '.' => "can't contain '.'" } // TODO: they actually can, just that `.` isn't a valid sym
     .map[String=>String](c => c +: _) <*> symCP.repeated.orEmpty.map(_.mkString) map (Sym(_))
-  val zilchP: Parser[Zilch.type] = char('\'') >> char('(') >> (ws|yawn) >> char(')') as Zilch
+  val zilchP: Parser[Zilch.type] = char('(') >> (ws|yawn) >> char(')') as Zilch
   lazy val listP: Parser[Sexpr] =
     yawn >> sexprP >>= (l => (((ws|yawn) >> listP) <+> happy(Zilch)) map (r => Cons(l, r)))
+  // lazy val cellP: Parser[Cons] = yawn >> sexprP <* (ws >> char('.')) *>
   lazy val consP:  Parser[Sexpr] = char('(') >> listP <* (ws|yawn) <* char(')')
   lazy val sexprP: Parser[Sexpr] = yawn >> litPosIntP | symP | consP <+> zilchP <* (ws|yawn)
   lazy val readP:  Parser[Sexpr] = (ws|yawn) >> sexprP <* (ws|yawn)

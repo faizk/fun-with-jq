@@ -1,0 +1,107 @@
+//> using test.dep org.scalameta::munit::0.7.29
+//> using test.dep org.scalameta::munit-scalacheck:0.7.29
+
+package tut
+
+import cats._, data._, syntax.all._
+
+class LispTests extends munit.FunSuite {
+  import lisp._
+
+  type OK = (String, Value)
+  def checkOK(name: String, expectation: OK, expectations: OK*)(implicit loc: munit.Location): Unit =
+    check(name = name, expectation.map(Right.apply), expectations.map(_ map Right.apply): _*)
+  type Expect = (String, Either[pc.Err, lisp.Value])
+  def check(name: String, expectation: Expect, expectations: Expect*)(implicit loc: munit.Location): Unit =
+    test(name) { 
+      for ((in, value) <- (expectation :: expectations.toList))
+        assertEquals(eval(in), value)
+    }
+
+  checkOK("number", "331" -> Lit(331))
+  checkOK("zilch", "()" -> Zilch)
+  check("let", 
+    "(let ((x 23)) x)" -> Lit(23).asRight,
+    "(let () 21)" -> Lit(21).asRight,
+    "(let ((x 11)) y)" -> "undefined variable: [y]".asLeft,
+  )
+  check("let recursive bindings",
+    "(let ((x 1) (y x)) y)" -> Lit(1).asRight,
+    "(let ((x 1) (y (let ((x x)) x))) y)" -> Lit(1).asRight,
+    "(let ((x 3)) (let ((y x)) y))" -> Lit(3).asRight,
+  )
+  checkOK("arith[+] arity-2", "(+ 3 8)" -> Lit(11))
+  checkOK("arith[+] arity-1", "(+ 41)" -> Lit(41))
+  checkOK("arith[+] arity-0", "(+ )" -> Lit(0))
+  checkOK("arith[+] arity-n", "(+ 71 32 6)" -> Lit(109))
+  checkOK("arith[+] arity-(..)", "(+ 71 (+ 4 3))" -> Lit(78))
+  checkOK("arith[-] arity-2", "(- 3 8)" -> Lit(-5))
+  checkOK("arith[-] arity-1", "(- 41)" -> Lit(-41))
+  checkOK("arith[-] arity-0", "(- )" -> Lit(0))
+  checkOK("arith[-] arity-n", "(- 71 32 6)" -> Lit(33))
+  checkOK("arith[-] arity-(..)", "(- 71 (- 4 3))" -> Lit(70))
+  checkOK("let body evaluation", "(let ((x 7)) (* 7 7))" -> Lit(49))
+  check("lambda arity-0",
+    "((lambda () 8))" -> Lit(8).asRight,
+    "((lambda () 8) 9)" -> "arity mismatch: given 1 for expected 0".asLeft,
+  )
+
+  check("bodiless lambdas aren't", "(lambda (x))" -> "undefined variable: [x]".asLeft)
+  test("[TODO] bodiless lambdas aren't".fail) {
+    assert(clue(eval("(lambda (x))").swap).exists(_ contains "syntax error"))
+  }
+}
+
+
+
+import org.scalacheck._, Prop._, Arbitrary.arbitrary
+
+class LispPropTests extends munit.ScalaCheckSuite {
+  import lisp._
+  import LispPropTests._
+
+  property("all s-expressions can be parsed") {
+    forAll { (e: Sexpr) =>
+      assertEquals(
+        readP(clue(e.show).toSeq),
+        Right(e -> Nil)
+      )
+    }
+  }
+
+}
+
+object LispPropTests {
+  import Gen._
+  import lisp._
+
+  val genSymC: Gen[Char] = asciiPrintableChar.suchThat {
+    case '('|')'|' '|'\n'|'\t'|','|'`'|'\'' => false
+    case _ => true }
+
+  val genNumE: Gen[Lit[Int]] = posNum[Int] map (Lit(_))
+  val genSymE: Gen[Sym] = for { 
+    a <- alphaChar
+    len <- choose[Int](0, 8)
+    s <- stringOfN(len, genSymC)
+  } yield Sym(a +: s)
+
+  val genZilch: Gen[Sexpr] = const(Zilch)
+
+  def genSexpr(size: Int): Gen[Sexpr] =
+    if (size >= 2) genCons(size / 2) 
+    else frequency(
+      1 -> const(Zilch),
+      3 -> oneOf(genNumE, genSymE),
+    )
+
+  def genCons(size: Int): Gen[Cons] =
+    for {
+      car <- genSexpr(size)
+      cdr <- genSexpr(size)
+    } yield Cons(car, cdr)
+
+  val genSexpr: Gen[Sexpr] = sized(genSexpr)
+
+  implicit val arbSexpr: Arbitrary[Sexpr] = Arbitrary(genSexpr)
+}

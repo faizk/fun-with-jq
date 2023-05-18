@@ -29,16 +29,14 @@ package object lisp2 { import pc2._
     .reject { case '.' => err("can't contain '.'") } // TODO: they actually can, just that `.` isn't a valid sym
     .map[String=>String](c => c +: _) <*> symCP.repeated.orEmpty.map(_.mkString) map (Sym(_))
   val zilchP: Parser[NIL.type] = char('(') >> (ws|yawn) >> char(')') as NIL
-  lazy val qteP: Parser[Qt] = char('\'') >> sexprP map Qt.apply
+  lazy val qteP: Parser[Qt] = char('\'') >> sxprP map Qt.apply
   lazy val listP: Parser[Sxpr] =
-    yawn >> sexprP >>= (l => (((ws|yawn) >> listP) <+> happy(NIL)) map (r => Pair(l, r)))
+    yawn >> sxprP >>= (l => (((ws|yawn) >> listP) <+> happy(NIL)) map (r => Pair(l, r)))
   lazy val cellP: Parser[Pair] = yawn >>
-    (sexprP <* (ws >> char('.') >> ws) map(l => Pair(l, _))) <*> sexprP
-  lazy val cellP1: Parser[Pair] = yawn >>
-    (sexprP <* (ws >> char('.') >> ws)) >>= (l => sexprP map (Pair(l, _)))
+    (sxprP <* (ws >> char('.') >> ws) map (l => Pair(l, _))) <*> sxprP
   lazy val consP:  Parser[Sxpr] = char('(') >> (cellP|listP) <* (ws|yawn) <* char(')')
-  lazy val sexprP: Parser[Sxpr] = yawn >> qteP | litPosIntP | symP | consP <+> zilchP
-  lazy val readP:  Parser[Sxpr] = (ws|yawn) >> sexprP <* (ws|yawn)
+  lazy val sxprP: Parser[Sxpr] = yawn >> qteP | litPosIntP | symP | consP <+> zilchP
+  lazy val readP:  Parser[Sxpr] = (ws|yawn) >> sxprP <* (ws|yawn)
 
   case class ShowPrefs(renderConsList: Boolean = true)
 

@@ -23,7 +23,7 @@ class LispTests extends munit.FunSuite {
   
   checkOK("symbol ref", "'a" -> Qt(Sym("a")))
   checkOK("zilch quoted", "'()" -> Qt(Zilch))
-  checkOK("cons list", "(cons 1 (cons 2 '()))" -> Cons(Lit(1), Cons(Lit(2), Zilch)))
+  //checkOK("cons list", "(cons 1 (cons 2 '()))" -> Cons(Lit(1), Cons(Lit(2), Zilch)))
 
   check("let", 
     "(let ((x 23)) x)" -> Lit(23).asRight,

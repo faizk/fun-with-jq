@@ -27,6 +27,57 @@ class Lisp2PropTests extends munit.ScalaCheckSuite {
     }
   }
 
+  val eval = lisp2.readP.friendly andThenF (lisp2.eval(_))
+
+  type OK = (String, Sxpr)
+  def checkOK(name: String, expectation: OK, expectations: OK*)(implicit loc: munit.Location): Unit =
+    check(name = name, expectation.map(Right.apply), expectations.map(_ map Right.apply): _*)
+  type Expect = (String, Either[Err, Value])
+  def check(name: String, expectation: Expect, expectations: Expect*)(implicit loc: munit.Location): Unit =
+    test(name) {
+      for ((in, value) <- (expectation :: expectations.toList))
+        assertEquals(eval(in), value)
+    }
+
+  checkOK("number", "331" -> Lit(331))
+  checkOK("zilch", "()" -> NIL)
+
+  checkOK("symbol ref", "'a" -> Sym("a"))
+  checkOK("zilch quoted", "'()" -> NIL)
+  checkOK("cons list", "(cons 1 (cons 2 '()))" -> Pair(Lit(1), Pair(Lit(2), NIL)))
+
+  check("let",
+    "(let ((x 23)) x)" -> Lit(23).asRight,
+    "(let () 21)" -> Lit(21).asRight,
+    "(let ((x 11)) y)" -> "undefined variable: [y]".asLeft,
+  )
+  check("let recursive bindings",
+    "(let ((x 1) (y x)) y)" -> Lit(1).asRight,
+    "(let ((x 1) (y (let ((x x)) x))) y)" -> Lit(1).asRight,
+    "(let ((x 3)) (let ((y x)) y))" -> Lit(3).asRight,
+  )
+
+  checkOK("arith[+] arity-2", "(+ 3 8)" -> Lit(11))
+  checkOK("arith[+] arity-1", "(+ 41)" -> Lit(41))
+  checkOK("arith[+] arity-0", "(+ )" -> Lit(0))
+  checkOK("arith[+] arity-n", "(+ 71 32 6)" -> Lit(109))
+  checkOK("arith[+] arity-(..)", "(+ 71 (+ 4 3))" -> Lit(78))
+  checkOK("arith[-] arity-2", "(- 3 8)" -> Lit(-5))
+  checkOK("arith[-] arity-1", "(- 41)" -> Lit(-41))
+  checkOK("arith[-] arity-0", "(- )" -> Lit(0))
+  checkOK("arith[-] arity-n", "(- 71 32 6)" -> Lit(33))
+  checkOK("arith[-] arity-(..)", "(- 71 (- 4 3))" -> Lit(70))
+  checkOK("let body evaluation", "(let ((x 7)) (* 7 7))" -> Lit(49))
+  check("lambda arity-0",
+    "((lambda () 8))" -> Lit(8).asRight,
+    "((lambda () 8) 9)" -> "arity mismatch: given 1 for expected 0".asLeft,
+  )
+
+  check("bodiless lambdas aren't", "(lambda (x))" -> "undefined variable: [lambda]".asLeft)
+  test("[TODO] bodiless lambdas aren't".fail){
+    assert(clue(eval("(lambda (x))").swap).exists(_ contains "syntax error"))
+  }
+
 }
 
 object Lisp2PropTests {

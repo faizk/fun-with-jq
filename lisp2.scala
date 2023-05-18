@@ -38,8 +38,60 @@ package object lisp2 { import pc2._
   lazy val sxprP: Parser[Sxpr] = yawn >> qteP | litPosIntP | symP | consP <+> zilchP
   lazy val readP:  Parser[Sxpr] = (ws|yawn) >> sxprP <* (ws|yawn)
 
-  case class ShowPrefs(renderConsList: Boolean = true)
+  type Env = Map[Sym, Sxpr]
+  type Value = Sxpr
+  type Err = String
 
+  trait Proc extends Sxpr {
+    def apply(arge: List[Sxpr]): Either[String, Sxpr]
+  }
+  case class Lambda(fargs: List[Sym], body: Sxpr, env: Env) extends Proc {
+    def apply(args: List[Value]): Either[Err, Value] =
+      if (fargs.size != args.size) show"arity mismatch: given ${args.length} for expected ${fargs.length}".asLeft
+      else eval(body, env = env ++ (fargs zip args))
+  }
+  trait BuiltIn extends Proc
+  def numOp(f: (Int,Int)=>Int, id: Int): BuiltIn =
+    _.map { case Lit(a: Int) => Right(a); case nan => Left(s"type-error: not a number: $nan") }
+      .sequence.map { case l@(_::_::_)=>l; case l => id::l }.map(_ reduce f).map(Lit(_))
+  def numOp(f: (Int,Int)=>Boolean): BuiltIn = {
+    case Lit(l:Int)::Lit(r:Int)::Nil => Right(Lit(f(l,r)))
+    case args => Left("wrong arity (want 2)")
+  }
+  val builtInEnv: Map[Sym, BuiltIn] = Map(
+    Sym("+")->numOp(_+_,0), Sym("*")->numOp(_*_,1), Sym("-")->numOp(_-_,0), Sym("/")->numOp(_/_,1),
+    Sym(">")->numOp(_>_),   Sym("<")->numOp(_<_),   Sym("<=")->numOp(_<=_), Sym(">=")->numOp(_>=_),
+    Sym("=")    -> { case l::r::Nil => Right(Lit(l==r));  case no => Left(s"(=)wrong arity (want 2), got: $no") },
+    Sym("cons") -> { case l::r::Nil => Right(Pair(l, r)); case no => Left(s"(cons)wrong arity (want 2), got $no") },
+    Sym("car")  -> { case Pair(car,_)::Nil => Right(car); case no => Left(s"type error: not cons: $no") },
+    Sym("cdr")  -> { case Pair(_,cdr)::Nil => Right(cdr); case no => Left(s"type error: not cons: $no") },
+  )
+
+  def newLetBind(env: Env, kv: Sxpr): Either[String, Env] = kv match {
+    case Pair(sym: Sym, Pair(e: Sxpr, NIL)) => eval(e, env).map(v => env ++ Map(sym -> v))
+    case e => s"syntax error: expected name-value pair, got [$e]".asLeft
+  }
+  val validFarg: Sxpr => Either[Err, Sym] =
+    { case s: Sym => s.asRight; case e => show"syntax error: bad arg [$e]".asLeft }
+
+  def eval(e: Sxpr, env: Env = builtInEnv): Either[String, Value] = e match {
+    case Qt(sxpr)    => eval(sxpr, env)
+    case lit: Lit[_] => Right(lit)
+    case sym: Sym    => env.get(sym).toRight(left = show"undefined variable: [$sym]")
+    case NIL         => Right(NIL)
+    case SxprSeq(Sym("let"), SxprSeq(bindings@_*), body: Sxpr) =>
+      bindings.toList.foldM(env)(newLetBind) >>= (eval(body, _))
+    case SxprSeq(Sym("lambda"), SxprSeq(fargEs@_*), body: Sxpr) =>
+      fargEs.toList.map(validFarg).sequence map (Lambda(_, body, env))
+    case SxprSeq(f: Proc, argEs@_*) =>
+      argEs.toList.map(eval(_, env = env)).sequence >>= f.apply
+    case Pair(fsxpr, argsE@SxprSeq(_*)) =>
+      eval(fsxpr, env) >>= (f => eval(Pair(f, argsE), env = env))
+    case Pair(fexpr, whatever) => s"syntax error: nonsense after $fexpr: $whatever".asLeft
+    case proc: Proc => Right(proc)
+  }
+
+  case class ShowPrefs(renderConsList: Boolean = true)
   implicit def showSxpr(implicit prefs: ShowPrefs = ShowPrefs()): Show[Sxpr] = {
     case Lit(v)                                   => s"$v"
     case Sym(name)                                => show"""$name"""
@@ -49,5 +101,6 @@ package object lisp2 { import pc2._
     case Pair(h, SxprSeq(t@_*)) if prefs.renderConsList =>
       (h +: t).map(_.show).mkString("(", " ", ")")
     case Pair(car, cdr)                           => show"""($car . $cdr)"""
+    case proc: Proc                               => s"#<procedure>$proc"
   }
 }

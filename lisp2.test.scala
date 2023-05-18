@@ -17,6 +17,14 @@ class Lisp2PropTests extends munit.ScalaCheckSuite {
       println(e.show)
       assertEquals(readP.friendly(e.show), Right(e))
     }
+ }
+
+  property("all s-expressions can be parsed, even when cons-list rendering is off") {
+    implicit val rPrefs = ShowPrefs(renderConsList = false)
+    forAll { (e: Sxpr) =>
+      println(e.show)
+      assertEquals(readP.friendly(e.show), Right(e))
+    }
   }
 
 }
@@ -54,8 +62,8 @@ object Lisp2PropTests {
 
   def genPair(size: Int): Gen[Pair] =
     for {
-      car <- genSxpr(size)
-      cdr <- genSxpr(size)
+      car <- genSxpr(size * 3/4)
+      cdr <- genSxpr(size * 1/4)
     } yield Pair(car, cdr)
 
   val genSxpr: Gen[Sxpr] = sized(genSxpr)

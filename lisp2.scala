@@ -11,7 +11,13 @@ package object lisp2 { import pc2._
   case object NIL extends Sxpr
   case class  Pair(l: Sxpr, r: Sxpr) extends Sxpr
   case class Qt(sxpr: Sxpr) extends Sxpr
-
+  object SxprSeq {
+    def unapplySeq(sxpr: Sxpr): Option[Seq[Sxpr]] = sxpr match {
+      case Pair(h: Sxpr, SxprSeq(t@_*)) => Some(h +: t)
+      case NIL => Some(Nil)
+      case _ => None
+    }
+  }
   val wsChars: Set[Char] = " \t\n".toSet
   val ws: Parser[Unit] = wsChars.map(char).reduce(_ <+> _).repeated.void
   val litPosIntP: Parser[Lit[Int]] = posIntP map (Lit(_))
@@ -34,16 +40,16 @@ package object lisp2 { import pc2._
   lazy val sexprP: Parser[Sxpr] = yawn >> qteP | litPosIntP | symP | consP <+> zilchP
   lazy val readP:  Parser[Sxpr] = (ws|yawn) >> sexprP <* (ws|yawn)
 
-  implicit val showSxpr: Show[Sxpr] = {
-    case Lit(v)                         => s"$v"
-    case Sym(name)                      => show"""$name"""
-    case Pair(car: Sxpr, NIL)           => show"""($car)"""
-    case Pair(car, NIL)                 => s"""($car)"""
-    //case Pair(h: Sxpr, SxprSeq(t@_*)) => (h +: t).map(_.show).mkString("(", " ", ")")
-    //case Pair(h, SxprSeq(t@_*))       => (h.toString +: t.map(_.show)).mkString("(", " ", ")")
-    case Pair(car: Sxpr, cdr: Sxpr)     => show"""($car . $cdr)"""
-    case Pair(car, cdr)                 => s"""($car . $cdr)"""
-    case NIL                            => "()"
-    case Qt(sxpr)                       => show"""'$sxpr"""
+  case class ShowPrefs(renderConsList: Boolean = true)
+
+  implicit def showSxpr(implicit prefs: ShowPrefs = ShowPrefs()): Show[Sxpr] = {
+    case Lit(v)                                   => s"$v"
+    case Sym(name)                                => show"""$name"""
+    case NIL                                      => "()"
+    case Qt(sxpr)                                 => show"""'$sxpr"""
+    case Pair(car, NIL) if prefs.renderConsList   => show"""($car)"""
+    case Pair(h, SxprSeq(t@_*)) if prefs.renderConsList =>
+      (h +: t).map(_.show).mkString("(", " ", ")")
+    case Pair(car, cdr)                           => show"""($car . $cdr)"""
   }
 }

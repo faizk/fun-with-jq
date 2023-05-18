@@ -3,6 +3,7 @@ package tut
 import cats._, cats.data._, cats.syntax.all._
 
 package object lisp { import pc._
+
   sealed trait Value {
     def apply(args: List[Value]): Either[Err, Value]
   }
@@ -20,6 +21,7 @@ package object lisp { import pc._
       case _ => None
     }
   }
+  case class Qt(e: Sexpr) extends Sexpr
   type Env = Map[Sym, Value]
   case class Lambda(fargs: List[Sym], body: Sexpr, env: Env) extends Value {
     def apply(args: List[Value]): Either[Err,Value] =
@@ -38,11 +40,13 @@ package object lisp { import pc._
     .reject { case '.' => "can't contain '.'" } // TODO: they actually can, just that `.` isn't a valid sym
     .map[String=>String](c => c +: _) <*> symCP.repeated.orEmpty.map(_.mkString) map (Sym(_))
   val zilchP: Parser[Zilch.type] = char('(') >> (ws|yawn) >> char(')') as Zilch
+  lazy val qteP: Parser[Qt] = char('\'') >> sexprP map Qt.apply
   lazy val listP: Parser[Sexpr] =
     yawn >> sexprP >>= (l => (((ws|yawn) >> listP) <+> happy(Zilch)) map (r => Cons(l, r)))
-  // lazy val cellP: Parser[Cons] = yawn >> sexprP <* (ws >> char('.')) *>
-  lazy val consP:  Parser[Sexpr] = char('(') >> listP <* (ws|yawn) <* char(')')
-  lazy val sexprP: Parser[Sexpr] = yawn >> litPosIntP | symP | consP <+> zilchP <* (ws|yawn)
+  lazy val cellP: Parser[Cons] = yawn >>
+    (sexprP <* (ws >> char('.')) map(l => Cons(l, _))) <*> sexprP
+  lazy val consP:  Parser[Sexpr] = char('(') >> (listP|cellP) <* (ws|yawn) <* char(')')
+  lazy val sexprP: Parser[Sexpr] = yawn >> qteP | litPosIntP | symP | consP <+> zilchP <* (ws|yawn)
   lazy val readP:  Parser[Sexpr] = (ws|yawn) >> sexprP <* (ws|yawn)
 
   trait BuiltIn extends Value
@@ -69,9 +73,10 @@ package object lisp { import pc._
     { case s: Sym => s.asRight; case e => show"syntax error: bad arg [$e]".asLeft }
 
   def eval(e: Sexpr, env: Map[Sym, Value] = builtInEnv): Either[Err, Value] = e match {
+    case qte: Qt     => Right(qte)
     case lit: Lit[_] => Right(lit)
-    case sym: Sym => env.get(sym).toRight(left = show"undefined variable: [$sym]")
-    case Zilch => Right(Zilch)
+    case sym: Sym    => env.get(sym).toRight(left = show"undefined variable: [$sym]")
+    case Zilch       => Right(Zilch)
     case SexprSeq(Sym("let"), SexprSeq(bindings@_*), body: Sexpr) =>
       bindings.toList.foldM(env)(newLetBind) >>= (eval(body, _))
     case SexprSeq(Sym("lambda"), SexprSeq(fargEs@_*), body: Sexpr) =>
@@ -96,5 +101,6 @@ package object lisp { import pc._
     case Cons(car: Sexpr, cdr: Sexpr)   => show"""($car . $cdr)"""
     case Cons(car, cdr)                 => s"""($car . $cdr)"""
     case Zilch                          => "()"
+    case Qt(e)                          => show"""$e"""
   }
 }

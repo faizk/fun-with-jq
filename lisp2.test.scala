@@ -78,6 +78,8 @@ class Lisp2PropTests extends munit.ScalaCheckSuite {
     assert(clue(eval("(lambda (x))").swap).exists(_ contains "syntax error"))
   }
 
+  checkOK("simple if/else", "(if (= 1 2) 'y 'n)" -> Sym("n"))
+
 }
 
 object Lisp2PropTests {

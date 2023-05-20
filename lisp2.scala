@@ -88,6 +88,8 @@ package object lisp2 { import pc2._
     case NIL         => Right(NIL)
     case SxprSeq(Sym("let"), SxprSeq(bindings@_*), body: Sxpr) =>
       bindings.toList.foldM(env)(newLetBind) >>= (eval(body, _))
+    case SxprSeq(Sym("if"), condE, thenE, elseE) =>
+      eval(condE, env) >>= { case Lit(false) => eval(elseE, env); case _ => eval(thenE, env) }
     case SxprSeq(Sym("lambda"), SxprSeq(fargEs@_*), body: Sxpr) =>
       fargEs.toList.map(validFarg).sequence map (Lambda(_, body, env))
     case SxprSeq(fsxpr, argEs@_*) => for {

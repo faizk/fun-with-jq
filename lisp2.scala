@@ -3,12 +3,14 @@ package tut
 import cats._, cats.data._, cats.syntax.all._
 
 package object lisp2 { import pc2._
+  type Err = String
+  type Value = Sxpr
 
   sealed trait Sxpr
   sealed trait Atom extends Sxpr
   case class Lit[A](a: A) extends Atom
   case class Sym(s: String) extends Atom
-  case object NIL extends Sxpr
+  case object NIL extends Atom
   case class  Pair(l: Sxpr, r: Sxpr) extends Sxpr
   case class Qt(sxpr: Sxpr) extends Sxpr
   object SxprSeq {
@@ -18,6 +20,9 @@ package object lisp2 { import pc2._
       case _ => None
     }
   }
+  def typeErr(msg: String): Err = s"type-error: $msg"
+  def typeErr[A](got: A, want: Class[_]): Either[Err, Value] =
+    typeErr(s"${got.getClass.getName} != ${want.getName}").asLeft
   val wsChars: Set[Char] = " \t\n".toSet
   val ws: Parser[Unit] = wsChars.map(char).reduce(_ <+> _).repeated.void
   val litPosIntP: Parser[Lit[Int]] = posIntP map (Lit(_))
@@ -39,11 +44,13 @@ package object lisp2 { import pc2._
   lazy val readP:  Parser[Sxpr] = (ws|yawn) >> sxprP <* (ws|yawn)
 
   type Env = Map[Sym, Sxpr]
-  type Value = Sxpr
-  type Err = String
 
   trait Proc extends Sxpr {
     def apply(arge: List[Sxpr]): Either[String, Sxpr]
+  }
+  val ensureCallable: Value => Either[Err, Proc] = {
+    case proc: Proc => proc.asRight
+    case uncallable => typeErr(s"$uncallable is not callable").asLeft
   }
   case class Lambda(fargs: List[Sym], body: Sxpr, env: Env) extends Proc {
     def apply(args: List[Value]): Either[Err, Value] =
@@ -52,7 +59,7 @@ package object lisp2 { import pc2._
   }
   trait BuiltIn extends Proc
   def numOp(f: (Int,Int)=>Int, id: Int): BuiltIn =
-    _.map { case Lit(a: Int) => Right(a); case nan => Left(s"type-error: not a number: $nan") }
+    _.map { case Lit(a: Int) => Right(a); case nan => typeErr(s"not a number: $nan").asLeft }
       .sequence.map { case l@(_::_::_)=>l; case l => id::l }.map(_ reduce f).map(Lit(_))
   def numOp(f: (Int,Int)=>Boolean): BuiltIn = {
     case Lit(l:Int)::Lit(r:Int)::Nil => Right(Lit(f(l,r)))
@@ -63,8 +70,8 @@ package object lisp2 { import pc2._
     Sym(">")->numOp(_>_),   Sym("<")->numOp(_<_),   Sym("<=")->numOp(_<=_), Sym(">=")->numOp(_>=_),
     Sym("=")    -> { case l::r::Nil => Right(Lit(l==r));  case no => Left(s"(=)wrong arity (want 2), got: $no") },
     Sym("cons") -> { case l::r::Nil => Right(Pair(l, r)); case no => Left(s"(cons)wrong arity (want 2), got $no") },
-    Sym("car")  -> { case Pair(car,_)::Nil => Right(car); case no => Left(s"type error: not cons: $no") },
-    Sym("cdr")  -> { case Pair(_,cdr)::Nil => Right(cdr); case no => Left(s"type error: not cons: $no") },
+    Sym("car")  -> { case Pair(car,_)::Nil => Right(car); case no => typeErr(no, classOf[Pair]) },
+    Sym("cdr")  -> { case Pair(_,cdr)::Nil => Right(cdr); case no => typeErr(no, classOf[Pair]) },
   )
 
   def newLetBind(env: Env, kv: Sxpr): Either[String, Env] = kv match {
@@ -75,7 +82,7 @@ package object lisp2 { import pc2._
     { case s: Sym => s.asRight; case e => show"syntax error: bad arg [$e]".asLeft }
 
   def eval(e: Sxpr, env: Env = builtInEnv): Either[String, Value] = e match {
-    case Qt(sxpr)    => eval(sxpr, env)
+    case Qt(sxpr)    => Right(sxpr)
     case lit: Lit[_] => Right(lit)
     case sym: Sym    => env.get(sym).toRight(left = show"undefined variable: [$sym]")
     case NIL         => Right(NIL)
@@ -83,10 +90,11 @@ package object lisp2 { import pc2._
       bindings.toList.foldM(env)(newLetBind) >>= (eval(body, _))
     case SxprSeq(Sym("lambda"), SxprSeq(fargEs@_*), body: Sxpr) =>
       fargEs.toList.map(validFarg).sequence map (Lambda(_, body, env))
-    case SxprSeq(f: Proc, argEs@_*) =>
-      argEs.toList.map(eval(_, env = env)).sequence >>= f.apply
-    case Pair(fsxpr, argsE@SxprSeq(_*)) =>
-      eval(fsxpr, env) >>= (f => eval(Pair(f, argsE), env = env))
+    case SxprSeq(fsxpr, argEs@_*) => for {
+        f    <- eval(fsxpr, env) >>= ensureCallable
+        args <- argEs.toList.map(eval(_, env)).sequence
+        r    <- f apply args
+      } yield r
     case Pair(fexpr, whatever) => s"syntax error: nonsense after $fexpr: $whatever".asLeft
     case proc: Proc => Right(proc)
   }

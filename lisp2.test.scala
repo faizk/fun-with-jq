@@ -29,6 +29,13 @@ class Lisp2PropTests extends munit.ScalaCheckSuite {
 
   val eval = lisp2.readP.friendly andThenF (lisp2.eval(_))
 
+  property("built-in `empty?` considers only `'()` as empty") {
+    forAll { (e: Sxpr) =>
+      val empty = eval(show"(empty? '$e)")
+      assertEquals(empty, Right(Lit(e == NIL)))
+    }
+  }
+
   type OK = (String, Sxpr)
   def checkOK(name: String, expectation: OK, expectations: OK*)(implicit loc: munit.Location): Unit =
     check(name = name, expectation.map(Right.apply), expectations.map(_ map Right.apply): _*)

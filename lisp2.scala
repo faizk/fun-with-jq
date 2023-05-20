@@ -72,6 +72,7 @@ package object lisp2 { import pc2._
     Sym("cons") -> { case l::r::Nil => Right(Pair(l, r)); case no => Left(s"(cons)wrong arity (want 2), got $no") },
     Sym("car")  -> { case Pair(car,_)::Nil => Right(car); case no => typeErr(no, classOf[Pair]) },
     Sym("cdr")  -> { case Pair(_,cdr)::Nil => Right(cdr); case no => typeErr(no, classOf[Pair]) },
+    Sym("empty?") -> { case NIL::Nil => Right(Lit(true)); case _ => Right(Lit(false)) },
   )
 
   def newLetBind(env: Env, kv: Sxpr): Either[String, Env] = kv match {

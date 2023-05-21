@@ -50,6 +50,7 @@ package object lisp2 { import pc2._
   }
   val ensureCallable: Value => Either[Err, Proc] = {
     case proc: Proc => proc.asRight
+    case loc: Loc => loc.value.toRight("NPE") >>= ensureCallable
     case uncallable => typeErr(s"$uncallable is not callable").asLeft
   }
   case class Lambda(fargs: List[Sym], body: Sxpr, env: Env) extends Proc {
@@ -75,10 +76,18 @@ package object lisp2 { import pc2._
     Sym("empty?") -> { case NIL::Nil => Right(Lit(true)); case _ => Right(Lit(false)) },
   )
 
-  def newLetBind(env: Env, kv: Sxpr): Either[String, Env] = kv match {
-    case Pair(sym: Sym, Pair(e: Sxpr, NIL)) => eval(e, env).map(v => env ++ Map(sym -> v))
+  val kvPair: Sxpr => Either[Err, (Sym, Sxpr)] = {
+    case Pair(k: Sym, Pair(v: Sxpr, NIL)) => (k -> v).asRight
     case e => s"syntax error: expected name-value pair, got [$e]".asLeft
   }
+
+  class Loc(var value: Option[Value]) extends Value {
+    def set(v: Value): Unit = value = Some(v)
+  }
+
+  def newLetBind(env: Env, kv: Sxpr): Either[String, Env] =
+    kvPair(kv) >>= { case (k, v) => eval(v, env).map(v => env + (k -> v)) }
+
   val validFarg: Sxpr => Either[Err, Sym] =
     { case s: Sym => s.asRight; case e => show"syntax error: bad arg [$e]".asLeft }
 
@@ -88,7 +97,19 @@ package object lisp2 { import pc2._
     case sym: Sym    => env.get(sym).toRight(left = show"undefined variable: [$sym]")
     case NIL         => Right(NIL)
     case SxprSeq(Sym("let"), SxprSeq(bindings@_*), body: Sxpr) =>
-      bindings.toList.foldM(env)(newLetBind) >>= (eval(body, _))
+      bindings.foldM(env)(newLetBind) >>= (eval(body, _))
+    case SxprSeq(Sym("letrec"), SxprSeq(bindings@_*), body: Sxpr) =>
+      for {
+        kvs <- bindings.map(kvPair).sequence
+        lEnv = kvs.map(_._1 -> new Loc(None)).toMap
+        newEnv <- kvs.foldM(env ++ lEnv) { case (envSoFar, (k, sxpr)) =>
+          eval(sxpr, envSoFar) map { v =>
+            lEnv(k).set(v)
+            envSoFar + (k -> v)
+          }
+        }
+        r <- eval(body, newEnv)
+      } yield r
     case SxprSeq(Sym("if"), condE, thenE, elseE) =>
       eval(condE, env) >>= { case Lit(false) => eval(elseE, env); case _ => eval(thenE, env) }
     case SxprSeq(Sym("lambda"), SxprSeq(fargEs@_*), body: Sxpr) =>
@@ -100,6 +121,7 @@ package object lisp2 { import pc2._
       } yield r
     case Pair(fexpr, whatever) => s"syntax error: nonsense after $fexpr: $whatever".asLeft
     case proc: Proc => Right(proc)
+    case loc: Loc => loc.value.toRight("NPE") >>= (eval(_, env))
   }
 
   case class ShowPrefs(renderConsList: Boolean = true)
@@ -113,5 +135,6 @@ package object lisp2 { import pc2._
       (h +: t).map(_.show).mkString("(", " ", ")")
     case Pair(car, cdr)                           => show"""($car . $cdr)"""
     case proc: Proc                               => s"#<procedure>$proc"
+    case loc: Loc                                 => show"#<loc>${loc.value}"
   }
 }

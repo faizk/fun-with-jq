@@ -87,6 +87,15 @@ class Lisp2PropTests extends munit.ScalaCheckSuite {
 
   checkOK("simple if/else", "(if (= 1 2) 'y 'n)" -> Sym("n"))
 
+  checkOK("recursion with letrec", """
+    (letrec ((len (lambda (l) (if (empty? l) 0 (+ 1 (len (cdr l))))))
+             (l2 (cons 'a (cons 'b '())))
+             (l7 '(1 2 3 4 5 6 7))
+             (l0 '()))
+       (cons (len l2) (cons (len l7) (cons (len l0) '()))))
+    """ -> Pair(Lit(2), Pair(Lit(7), Pair(Lit(0), NIL)))
+  )
+
 }
 
 object Lisp2PropTests {

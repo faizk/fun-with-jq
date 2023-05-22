@@ -96,6 +96,17 @@ class Lisp2PropTests extends munit.ScalaCheckSuite {
     """ -> Pair(Lit(2), Pair(Lit(7), Pair(Lit(0), NIL)))
   )
 
+  checkOK("HOF", """
+    (letrec ((map (lambda (f l)
+                    (if (empty? l)
+                      l
+                      (cons (f (car l))
+                            (map f (cdr l)))))))
+      (map (lambda (x) (+ x x))
+           '(1 2 3)))
+    """ -> Pair(Lit(2), Pair(Lit(4), Pair(Lit(6), NIL)))
+  )
+
 }
 
 object Lisp2PropTests {

@@ -43,37 +43,56 @@ package object lisp2 { import pc2._
   lazy val sxprP: Parser[Sxpr] = yawn >> qteP | litPosIntP | symP | consP <+> zilchP
   lazy val readP:  Parser[Sxpr] = (ws|yawn) >> sxprP <* (ws|yawn)
 
-  type Env = Map[Sym, Sxpr]
+  type Loc = Int
+  type Mem = Map[Loc, Value]
+  implicit class MemOps(m: Mem) {
+    def nextLoc: Loc = m.size
+    def alloc(v: Value): (Loc, Mem) =
+      nextLoc -> (m + (nextLoc -> v))
+    def fetch(loc: Loc): Either[Err, Value] =
+      m.get(loc).toRight("NPE")
+  }
+  type Env = Map[Sym, Loc]
 
   trait Proc extends Sxpr {
-    def apply(arge: List[Sxpr]): Either[String, Sxpr]
+    def apply(args: List[Sxpr])(implicit mem: Mem): Either[String, Sxpr]
+    override def toString(): String = "<proc?>"
   }
   val ensureCallable: Value => Either[Err, Proc] = {
     case proc: Proc => proc.asRight
-    case loc: Loc => loc.value.toRight("NPE") >>= ensureCallable
     case uncallable => typeErr(s"$uncallable is not callable").asLeft
   }
   case class Lambda(fargs: List[Sym], body: Sxpr, env: Env) extends Proc {
-    def apply(args: List[Value]): Either[Err, Value] =
+    def apply(args: List[Value])(implicit mem: Mem): Either[Err, Value] =
       if (fargs.size != args.size) show"arity mismatch: given ${args.length} for expected ${fargs.length}".asLeft
-      else eval(body, env = env ++ (fargs zip args))
+      else
+        (fargs zip args).foldLeft(env -> mem) { case ((e, m), (fa, a)) =>
+          m.alloc(a) match { case (loc, newMem) => (env + (fa -> loc), newMem) }
+        } match { case (env, mem) => eval(body, env)(mem) }
   }
+
   trait BuiltIn extends Proc
-  def numOp(f: (Int,Int)=>Int, id: Int): BuiltIn =
+  object BuiltIn {
+    def apply(f: List[Sxpr] => Either[Err, Sxpr]): BuiltIn = new BuiltIn {
+      def apply(args: List[Sxpr])(implicit mem: Mem): Either[String,Sxpr] = f(args)
+    }
+  }
+  def numOp(f: (Int,Int)=>Int, id: Int): BuiltIn = BuiltIn {
     _.map { case Lit(a: Int) => Right(a); case nan => typeErr(s"not a number: $nan").asLeft }
       .sequence.map { case l@(_::_::_)=>l; case l => id::l }.map(_ reduce f).map(Lit(_))
-  def numOp(f: (Int,Int)=>Boolean): BuiltIn = {
+  }
+  def numOp(f: (Int,Int)=>Boolean): BuiltIn = BuiltIn {
     case Lit(l:Int)::Lit(r:Int)::Nil => Right(Lit(f(l,r)))
     case args => Left("wrong arity (want 2)")
   }
   val builtInEnv: Map[Sym, BuiltIn] = Map(
     Sym("+")->numOp(_+_,0), Sym("*")->numOp(_*_,1), Sym("-")->numOp(_-_,0), Sym("/")->numOp(_/_,1),
     Sym(">")->numOp(_>_),   Sym("<")->numOp(_<_),   Sym("<=")->numOp(_<=_), Sym(">=")->numOp(_>=_),
-    Sym("=")    -> { case l::r::Nil => Right(Lit(l==r));  case no => Left(s"(=)wrong arity (want 2), got: $no") },
-    Sym("cons") -> { case l::r::Nil => Right(Pair(l, r)); case no => Left(s"(cons)wrong arity (want 2), got $no") },
-    Sym("car")  -> { case Pair(car,_)::Nil => Right(car); case no => typeErr(no, classOf[Pair]) },
-    Sym("cdr")  -> { case Pair(_,cdr)::Nil => Right(cdr); case no => typeErr(no, classOf[Pair]) },
-    Sym("empty?") -> { case NIL::Nil => Right(Lit(true)); case _ => Right(Lit(false)) },
+    Sym("=")    -> BuiltIn { case l::r::Nil => Right(Lit(l==r));  case no => Left(s"(=)wrong arity (want 2), got: $no") },
+    Sym("cons") -> BuiltIn { case l::r::Nil => Right(Pair(l, r)); case no => Left(s"(cons)wrong arity (want 2), got $no") },
+    Sym("car")  -> BuiltIn { case Pair(car,_)::Nil => Right(car); case no => typeErr(no, classOf[Pair]) },
+    Sym("cdr")  -> BuiltIn { case Pair(_,cdr)::Nil => Right(cdr); case no => typeErr(no, classOf[Pair]) },
+    Sym("empty?") -> BuiltIn { case NIL::Nil => Right(Lit(true)); case _ => Right(Lit(false)) },
   )
 
   val kvPair: Sxpr => Either[Err, (Sym, Sxpr)] = {
@@ -81,48 +100,45 @@ package object lisp2 { import pc2._
     case e => s"syntax error: expected name-value pair, got [$e]".asLeft
   }
 
-  class Loc(var value: Option[Value]) extends Value {
-    def set(v: Value): Unit = value = Some(v)
-  }
-
-  def newLetBind(env: Env, kv: Sxpr): Either[String, Env] =
-    kvPair(kv) >>= { case (k, v) => eval(v, env).map(v => env + (k -> v)) }
-
   val validFarg: Sxpr => Either[Err, Sym] =
     { case s: Sym => s.asRight; case e => show"syntax error: bad arg [$e]".asLeft }
 
-  def eval(e: Sxpr, env: Env = builtInEnv): Either[String, Value] = e match {
+  def eval(e: Sxpr, env: Env)(implicit mem: Mem): Either[String, Value] = e match {
     case Qt(sxpr)    => Right(sxpr)
     case lit: Lit[_] => Right(lit)
-    case sym: Sym    => env.get(sym).toRight(left = show"undefined variable: [$sym]")
+    case sym: Sym    => env.get(sym).toRight(left = show"undefined variable: [$sym]") >>= mem.fetch
     case NIL         => Right(NIL)
     case SxprSeq(Sym("let"), SxprSeq(bindings@_*), body: Sxpr) =>
-      bindings.foldM(env)(newLetBind) >>= (eval(body, _))
-    case SxprSeq(Sym("letrec"), SxprSeq(bindings@_*), body: Sxpr) =>
-      for {
+      bindings.foldM(env->mem) { case ((env, mem), maybeKV) => kvPair(maybeKV) >>=
+        { case (k, v) => eval(v, env)(mem) map mem.alloc map { case (loc, newMem) => (env + (k -> loc), newMem) } }
+      } >>= (eval(body, _))
+    case SxprSeq(Sym("letrec"), SxprSeq(bindings@_*), body: Sxpr) => for {
         kvs <- bindings.map(kvPair).sequence
-        lEnv = kvs.map(_._1 -> new Loc(None)).toMap
-        newEnv <- kvs.foldM(env ++ lEnv) { case (envSoFar, (k, sxpr)) =>
-          eval(sxpr, envSoFar) map { v =>
-            lEnv(k).set(v)
-            envSoFar + (k -> v)
-          }
+        lEnv = kvs.map(_._1).zipWithIndex.map { case (sym, i) => sym -> (mem.nextLoc + i) }
+        newEnv = env ++ lEnv
+        newMem <- kvs.foldM(mem) { case (memSoFar, (k, sxpr)) =>
+          eval(sxpr, newEnv)(memSoFar) map memSoFar.alloc map (_._2)
         }
-        r <- eval(body, newEnv)
+        r <- eval(body, newEnv)(newMem)
       } yield r
     case SxprSeq(Sym("if"), condE, thenE, elseE) =>
       eval(condE, env) >>= { case Lit(false) => eval(elseE, env); case _ => eval(thenE, env) }
     case SxprSeq(Sym("lambda"), SxprSeq(fargEs@_*), body: Sxpr) =>
       fargEs.toList.map(validFarg).sequence map (Lambda(_, body, env))
-    case SxprSeq(fsxpr, argEs@_*) => for {
+    case x@SxprSeq(fsxpr, argEs@_*) => for {
         f    <- eval(fsxpr, env) >>= ensureCallable
         args <- argEs.toList.map(eval(_, env)).sequence
         r    <- f apply args
       } yield r
     case Pair(fexpr, whatever) => s"syntax error: nonsense after $fexpr: $whatever".asLeft
     case proc: Proc => Right(proc)
-    case loc: Loc => loc.value.toRight("NPE") >>= (eval(_, env))
   }
+  def eval(e: Sxpr, envMem: (Env, Mem)): Either[Err, Value] =
+    envMem match { case (env, mem) => eval(e, env)(mem) }
+  def eval(e: Sxpr): Either[Err, Value] =
+    builtInEnv.foldLeft[(Env, Mem)](Map.empty -> Map.empty) { case ((env, mem), (sym, bi)) =>
+      mem.alloc(bi) match { case (loc, newMem) => (env + (sym -> loc), mem + (loc -> bi)) }
+    } match { case (env, mem) => eval(e, (env, mem)) }
 
   case class ShowPrefs(renderConsList: Boolean = true)
   implicit def showSxpr(implicit prefs: ShowPrefs = ShowPrefs()): Show[Sxpr] = {
@@ -135,6 +151,5 @@ package object lisp2 { import pc2._
       (h +: t).map(_.show).mkString("(", " ", ")")
     case Pair(car, cdr)                           => show"""($car . $cdr)"""
     case proc: Proc                               => s"#<procedure>$proc"
-    case loc: Loc                                 => show"#<loc>${loc.value}"
   }
 }

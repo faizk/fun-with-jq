@@ -79,6 +79,8 @@ class Lisp2PropTests extends munit.ScalaCheckSuite {
     "((lambda () 8))" -> Lit(8).asRight,
     "((lambda () 8) 9)" -> "arity mismatch: given 1 for expected 0".asLeft,
   )
+  checkOK("lambda arity-1", "((lambda (x) (+ 7 x)) 2)" -> Lit(9))
+  checkOK("lambda arity-2", "((lambda (x y) (+ y x)) 2 3)" -> Lit(5))
 
   check("bodiless lambdas aren't", "(lambda (x))" -> "undefined variable: [lambda]".asLeft)
   test("[TODO] bodiless lambdas aren't".fail){

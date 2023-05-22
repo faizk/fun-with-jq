@@ -1,6 +1,7 @@
 package tut
 
 import cats._, cats.data._, cats.syntax.all._
+import cats.syntax.all
 
 package object lisp2 { import pc2._
   type Err = String
@@ -43,20 +44,21 @@ package object lisp2 { import pc2._
   lazy val sxprP: Parser[Sxpr] = yawn >> qteP | litPosIntP | symP | consP <+> zilchP
   lazy val readP:  Parser[Sxpr] = (ws|yawn) >> sxprP <* (ws|yawn)
 
+  type Env = Map[Sym, Loc]
   type Loc = Int
   type Mem = Map[Loc, Value]
   implicit class MemOps(m: Mem) {
     def nextLoc: Loc = m.size
-    def alloc(v: Value): (Loc, Mem) =
-      nextLoc -> (m + (nextLoc -> v))
-    def fetch(loc: Loc): Either[Err, Value] =
-      m.get(loc).toRight("NPE")
+    def fetch(loc: Loc): Either[Err, Value] = m.get(loc).toRight("NPE")
+    def alloc(v: Value): (Mem, Loc) = (m + (nextLoc -> v)) -> nextLoc
+    def alloc(values: Iterable[(Sym, Value)]): (Mem, Env) = values
+      .foldLeft(m, Map(): Env) { case ((mem, env), kv) => mem.alloc(kv) map (env ++ _) }
+    def alloc(kv: (Sym, Value)): (Mem, Env) =
+      kv match { case (sym, v) => alloc(v) map (sym -> _) map (Map(_)) }
   }
-  type Env = Map[Sym, Loc]
 
   trait Proc extends Sxpr {
     def apply(args: List[Sxpr])(implicit mem: Mem): Either[String, Sxpr]
-    override def toString(): String = "<proc?>"
   }
   val ensureCallable: Value => Either[Err, Proc] = {
     case proc: Proc => proc.asRight
@@ -65,10 +67,9 @@ package object lisp2 { import pc2._
   case class Lambda(fargs: List[Sym], body: Sxpr, env: Env) extends Proc {
     def apply(args: List[Value])(implicit mem: Mem): Either[Err, Value] =
       if (fargs.size != args.size) show"arity mismatch: given ${args.length} for expected ${fargs.length}".asLeft
-      else
-        (fargs zip args).foldLeft(env -> mem) { case ((e, m), (fa, a)) =>
-          m.alloc(a) match { case (loc, newMem) => (env + (fa -> loc), newMem) }
-        } match { case (env, mem) => eval(body, env)(mem) }
+      else mem.alloc(fargs zip args) match {
+        case (newMem, newEnv) => eval(body, env ++ newEnv)(newMem)
+      }
   }
 
   trait BuiltIn extends Proc
@@ -85,7 +86,7 @@ package object lisp2 { import pc2._
     case Lit(l:Int)::Lit(r:Int)::Nil => Right(Lit(f(l,r)))
     case args => Left("wrong arity (want 2)")
   }
-  val builtInEnv: Map[Sym, BuiltIn] = Map(
+  val (initMem, initEnv): (Mem, Env) = (Map(): Mem).alloc(Map(
     Sym("+")->numOp(_+_,0), Sym("*")->numOp(_*_,1), Sym("-")->numOp(_-_,0), Sym("/")->numOp(_/_,1),
     Sym(">")->numOp(_>_),   Sym("<")->numOp(_<_),   Sym("<=")->numOp(_<=_), Sym(">=")->numOp(_>=_),
     Sym("=")    -> BuiltIn { case l::r::Nil => Right(Lit(l==r));  case no => Left(s"(=)wrong arity (want 2), got: $no") },
@@ -93,7 +94,7 @@ package object lisp2 { import pc2._
     Sym("car")  -> BuiltIn { case Pair(car,_)::Nil => Right(car); case no => typeErr(no, classOf[Pair]) },
     Sym("cdr")  -> BuiltIn { case Pair(_,cdr)::Nil => Right(cdr); case no => typeErr(no, classOf[Pair]) },
     Sym("empty?") -> BuiltIn { case NIL::Nil => Right(Lit(true)); case _ => Right(Lit(false)) },
-  )
+  ))
 
   val kvPair: Sxpr => Either[Err, (Sym, Sxpr)] = {
     case Pair(k: Sym, Pair(v: Sxpr, NIL)) => (k -> v).asRight
@@ -108,16 +109,19 @@ package object lisp2 { import pc2._
     case lit: Lit[_] => Right(lit)
     case sym: Sym    => env.get(sym).toRight(left = show"undefined variable: [$sym]") >>= mem.fetch
     case NIL         => Right(NIL)
-    case SxprSeq(Sym("let"), SxprSeq(bindings@_*), body: Sxpr) =>
-      bindings.foldM(env->mem) { case ((env, mem), maybeKV) => kvPair(maybeKV) >>=
-        { case (k, v) => eval(v, env)(mem) map mem.alloc map { case (loc, newMem) => (env + (k -> loc), newMem) } }
-      } >>= (eval(body, _))
-    case SxprSeq(Sym("letrec"), SxprSeq(bindings@_*), body: Sxpr) => for {
+    case SxprSeq(Sym("let"), SxprSeq(bindings@_*), body: Sxpr) => for {
         kvs <- bindings.map(kvPair).sequence
-        lEnv = kvs.map(_._1).zipWithIndex.map { case (sym, i) => sym -> (mem.nextLoc + i) }
-        newEnv = env ++ lEnv
-        newMem <- kvs.foldM(mem) { case (memSoFar, (k, sxpr)) =>
-          eval(sxpr, newEnv)(memSoFar) map memSoFar.alloc map (_._2)
+        upd <- kvs.foldM(mem -> env) { case ((mem, env), (sym, v)) =>
+          eval(v, env)(mem) map (sym -> _) map mem.alloc map (_ map (env ++ _))
+        }
+        (uMem, uEnv) = upd
+        r <- eval(body, uEnv)(uMem)
+      } yield r
+    case SxprSeq(Sym("letrec"), SxprSeq(bindings@_*), body: Sxpr) => for {
+        kvs    <- bindings.map(kvPair).sequence
+        newEnv  = env ++ kvs.map(_._1).zipWithIndex.map(_ map (mem.nextLoc + _))
+        newMem <- kvs.foldM(mem) { case (memAcc, (k, sxpr)) => // free GC?
+          eval(sxpr, newEnv)(memAcc) map memAcc.alloc map (_._1)
         }
         r <- eval(body, newEnv)(newMem)
       } yield r
@@ -133,12 +137,7 @@ package object lisp2 { import pc2._
     case Pair(fexpr, whatever) => s"syntax error: nonsense after $fexpr: $whatever".asLeft
     case proc: Proc => Right(proc)
   }
-  def eval(e: Sxpr, envMem: (Env, Mem)): Either[Err, Value] =
-    envMem match { case (env, mem) => eval(e, env)(mem) }
-  def eval(e: Sxpr): Either[Err, Value] =
-    builtInEnv.foldLeft[(Env, Mem)](Map.empty -> Map.empty) { case ((env, mem), (sym, bi)) =>
-      mem.alloc(bi) match { case (loc, newMem) => (env + (sym -> loc), mem + (loc -> bi)) }
-    } match { case (env, mem) => eval(e, (env, mem)) }
+  def eval(e: Sxpr): Either[Err, Value] = eval(e, initEnv)(initMem)
 
   case class ShowPrefs(renderConsList: Boolean = true)
   implicit def showSxpr(implicit prefs: ShowPrefs = ShowPrefs()): Show[Sxpr] = {

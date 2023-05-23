@@ -104,40 +104,39 @@ package object lisp2 { import pc2._
   val validFarg: Sxpr => Either[Err, Sym] =
     { case s: Sym => s.asRight; case e => show"syntax error: bad arg [$e]".asLeft }
 
-  def eval(e: Sxpr, env: Env)(implicit mem: Mem): Either[String, (Mem, Value)] = e match {
+  def eval(e: Sxpr, env: Env)(mem: Mem): Either[String, (Mem, Value)] = e match {
     case Qt(sxpr)    => Right(mem -> sxpr)
     case lit: Lit[_] => Right(mem -> lit)
     case sym: Sym    => env.get(sym).toRight(left = show"undefined variable: [$sym]") >>= (s => mem.fetch(s).map(mem -> _))
     case NIL         => Right(mem -> NIL)
     case SxprSeq(Sym("let"), SxprSeq(bindings@_*), body: Sxpr) => for { // NOTE: this is actually `let*`
-        kvs <- bindings.map(kvPair).sequence
-        upd <- kvs.foldM(mem -> env) { case ((mem, env), (sym, v)) =>
-          eval(v, env)(mem) map { case (mem, r) => mem.alloc(sym -> r) map (env ++ _) }
-        }
-        (uMem, uEnv) = upd
-        r <- eval(body, uEnv)(uMem)
+        kvs          <- bindings.map(kvPair).sequence
+        upd          <- kvs.foldM(mem -> env) { case ((m, env), (sym, ve)) =>
+                          eval(ve, env)(m) map { case (m, v) => m.alloc(sym -> v) map (env ++ _) }
+                        }
+        (uMem, uEnv) =  upd
+        r            <- eval(body, uEnv)(uMem)
       } yield r
     case SxprSeq(Sym("letrec"), SxprSeq(bindings@_*), body: Sxpr) => for {
-        kvs    <- bindings.map(kvPair).sequence
-        newEnv  = env ++ kvs.map(_._1).zipWithIndex.map(_ map (mem.nextLoc + _))
-        newMem <- kvs.foldM(mem) { case (memAcc, (k, sxpr)) => // free GC?
-          //eval(sxpr, newEnv)(memAcc) map memAcc.alloc map (_._1)
-          eval(sxpr, newEnv)(memAcc) map { case (mem, r) => mem.alloc(r) } map (_._1)
-        }
-        r <- eval(body, newEnv)(newMem)
+        kvs     <- bindings.map(kvPair).sequence
+        newEnv  =  env ++ kvs.map(_._1).zipWithIndex.map(_ map (mem.nextLoc + _))
+        newMem  <- kvs.foldM(mem) { case (m, (_, sxpr)) =>
+                     eval(sxpr, newEnv)(m) map { case (m, r) => m.alloc(r)._1 }
+                   }
+        r       <- eval(body, newEnv)(newMem)
       } yield r
     case SxprSeq(Sym("if"), condE, thenE, elseE) =>
-      eval(condE, env) >>= { case (m, Lit(false)) => eval(elseE, env)(m); case (m, _) => eval(thenE, env)(m) }
+      eval(condE, env)(mem) >>= { case (m, Lit(false)) => eval(elseE, env)(m); case (m, _) => eval(thenE, env)(m) }
     case SxprSeq(Sym("lambda"), SxprSeq(fargEs@_*), body: Sxpr) =>
       fargEs.toList.map(validFarg).sequence map (Lambda(_, body, env)) map (mem -> _)
     case x@SxprSeq(fsxpr, argEs@_*) => for {
-        fm    <- eval(fsxpr, env) >>= { case (m, fv) => ensureCallable(fv) map (m -> _)}
-        (m,f) =  fm
-        am    <- argEs.toList.foldM(mem -> List.empty[Value]) { case ((m, acc), argE) =>
-          eval(argE, env)(m).map(_.map(acc :+ _))
-        }
-        (m, args) = am
-        r    <- f.apply(args)(m)
+        mf        <- eval(fsxpr, env)(mem) >>= { case (m, fv) => ensureCallable(fv) map (m -> _) }
+        (m,f)     =  mf
+        mArgs     <- argEs.toList.foldM(m -> List.empty[Value]) { case ((m, acc), argE) =>
+                       eval(argE, env)(m).map(_ map (acc :+ _))
+                     }
+        (m, args) =  mArgs
+        r         <- f.apply(args)(m)
       } yield r
     case Pair(fexpr, whatever) => s"syntax error: nonsense after $fexpr: $whatever".asLeft
     case proc: Proc => Right(mem -> proc)

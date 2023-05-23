@@ -79,6 +79,9 @@ class Lisp2PropTests extends munit.ScalaCheckSuite {
     "((lambda () 8))" -> Lit(8).asRight,
     "((lambda () 8) 9)" -> "arity mismatch: given 1 for expected 0".asLeft,
   )
+  checkOK("let body providing lexical scope",
+    "((let ((y 2)) (lambda (x) (+ x y))) 4)" -> Lit(6))
+
   checkOK("lambda arity-1", "((lambda (x) (+ 7 x)) 2)" -> Lit(9))
   checkOK("lambda arity-2", "((lambda (x y) (+ y x)) 2 3)" -> Lit(5))
 
@@ -108,6 +111,18 @@ class Lisp2PropTests extends munit.ScalaCheckSuite {
            '(1 2 3)))
     """ -> Pair(Lit(2), Pair(Lit(4), Pair(Lit(6), NIL)))
   )
+
+  /*
+  test("lexical scope") {
+    assertEquals(
+      eval(
+        """
+        (let ((y 1))
+          ((let ((y 2)) (lambda (x) (+ x y))) 4))
+        """),
+      Right(Lit(6)))
+  }
+  */
 
 }
 

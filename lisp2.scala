@@ -109,7 +109,7 @@ package object lisp2 { import pc2._
     case lit: Lit[_] => Right(lit)
     case sym: Sym    => env.get(sym).toRight(left = show"undefined variable: [$sym]") >>= mem.fetch
     case NIL         => Right(NIL)
-    case SxprSeq(Sym("let"), SxprSeq(bindings@_*), body: Sxpr) => for {
+    case SxprSeq(Sym("let"), SxprSeq(bindings@_*), body: Sxpr) => for { // NOTE: this is actually `let*`
         kvs <- bindings.map(kvPair).sequence
         upd <- kvs.foldM(mem -> env) { case ((mem, env), (sym, v)) =>
           eval(v, env)(mem) map (sym -> _) map mem.alloc map (_ map (env ++ _))

@@ -58,14 +58,14 @@ package object lisp2 { import pc2._
   }
 
   trait Proc extends Sxpr {
-    def apply(args: List[Sxpr])(implicit mem: Mem): Either[String, Sxpr]
+    def apply(args: List[Value])(implicit mem: Mem): Either[String, (Mem, Value)]
   }
   val ensureCallable: Value => Either[Err, Proc] = {
     case proc: Proc => proc.asRight
     case uncallable => typeErr(s"$uncallable is not callable").asLeft
   }
   case class Lambda(fargs: List[Sym], body: Sxpr, env: Env) extends Proc {
-    def apply(args: List[Value])(implicit mem: Mem): Either[Err, Value] =
+    def apply(args: List[Value])(implicit mem: Mem): Either[Err, (Mem, Value)] =
       if (fargs.size != args.size) show"arity mismatch: given ${args.length} for expected ${fargs.length}".asLeft
       else mem.alloc(fargs zip args) match {
         case (newMem, newEnv) => eval(body, env ++ newEnv)(newMem)
@@ -75,7 +75,7 @@ package object lisp2 { import pc2._
   trait BuiltIn extends Proc
   object BuiltIn {
     def apply(f: List[Sxpr] => Either[Err, Sxpr]): BuiltIn = new BuiltIn {
-      def apply(args: List[Sxpr])(implicit mem: Mem): Either[String,Sxpr] = f(args)
+      def apply(args: List[Sxpr])(implicit mem: Mem): Either[String, (Mem, Sxpr)] = f(args) map (mem -> _)
     }
   }
   def numOp(f: (Int,Int)=>Int, id: Int): BuiltIn = BuiltIn {
@@ -104,15 +104,15 @@ package object lisp2 { import pc2._
   val validFarg: Sxpr => Either[Err, Sym] =
     { case s: Sym => s.asRight; case e => show"syntax error: bad arg [$e]".asLeft }
 
-  def eval(e: Sxpr, env: Env)(implicit mem: Mem): Either[String, Value] = e match {
-    case Qt(sxpr)    => Right(sxpr)
-    case lit: Lit[_] => Right(lit)
-    case sym: Sym    => env.get(sym).toRight(left = show"undefined variable: [$sym]") >>= mem.fetch
-    case NIL         => Right(NIL)
+  def eval(e: Sxpr, env: Env)(implicit mem: Mem): Either[String, (Mem, Value)] = e match {
+    case Qt(sxpr)    => Right(mem -> sxpr)
+    case lit: Lit[_] => Right(mem -> lit)
+    case sym: Sym    => env.get(sym).toRight(left = show"undefined variable: [$sym]") >>= (s => mem.fetch(s).map(mem -> _))
+    case NIL         => Right(mem -> NIL)
     case SxprSeq(Sym("let"), SxprSeq(bindings@_*), body: Sxpr) => for { // NOTE: this is actually `let*`
         kvs <- bindings.map(kvPair).sequence
         upd <- kvs.foldM(mem -> env) { case ((mem, env), (sym, v)) =>
-          eval(v, env)(mem) map (sym -> _) map mem.alloc map (_ map (env ++ _))
+          eval(v, env)(mem) map { case (mem, r) => mem.alloc(sym -> r) map (env ++ _) }
         }
         (uMem, uEnv) = upd
         r <- eval(body, uEnv)(uMem)
@@ -121,23 +121,28 @@ package object lisp2 { import pc2._
         kvs    <- bindings.map(kvPair).sequence
         newEnv  = env ++ kvs.map(_._1).zipWithIndex.map(_ map (mem.nextLoc + _))
         newMem <- kvs.foldM(mem) { case (memAcc, (k, sxpr)) => // free GC?
-          eval(sxpr, newEnv)(memAcc) map memAcc.alloc map (_._1)
+          //eval(sxpr, newEnv)(memAcc) map memAcc.alloc map (_._1)
+          eval(sxpr, newEnv)(memAcc) map { case (mem, r) => mem.alloc(r) } map (_._1)
         }
         r <- eval(body, newEnv)(newMem)
       } yield r
     case SxprSeq(Sym("if"), condE, thenE, elseE) =>
-      eval(condE, env) >>= { case Lit(false) => eval(elseE, env); case _ => eval(thenE, env) }
+      eval(condE, env) >>= { case (m, Lit(false)) => eval(elseE, env)(m); case (m, _) => eval(thenE, env)(m) }
     case SxprSeq(Sym("lambda"), SxprSeq(fargEs@_*), body: Sxpr) =>
-      fargEs.toList.map(validFarg).sequence map (Lambda(_, body, env))
+      fargEs.toList.map(validFarg).sequence map (Lambda(_, body, env)) map (mem -> _)
     case x@SxprSeq(fsxpr, argEs@_*) => for {
-        f    <- eval(fsxpr, env) >>= ensureCallable
-        args <- argEs.toList.map(eval(_, env)).sequence
-        r    <- f apply args
+        fm    <- eval(fsxpr, env) >>= { case (m, fv) => ensureCallable(fv) map (m -> _)}
+        (m,f) =  fm
+        am    <- argEs.toList.foldM(mem -> List.empty[Value]) { case ((m, acc), argE) =>
+          eval(argE, env)(m).map(_.map(acc :+ _))
+        }
+        (m, args) = am
+        r    <- f.apply(args)(m)
       } yield r
     case Pair(fexpr, whatever) => s"syntax error: nonsense after $fexpr: $whatever".asLeft
-    case proc: Proc => Right(proc)
+    case proc: Proc => Right(mem -> proc)
   }
-  def eval(e: Sxpr): Either[Err, Value] = eval(e, initEnv)(initMem)
+  def eval(e: Sxpr): Either[Err, Value] = eval(e, initEnv)(initMem) map(_._2)
 
   case class ShowPrefs(renderConsList: Boolean = true)
   implicit def showSxpr(implicit prefs: ShowPrefs = ShowPrefs()): Show[Sxpr] = {

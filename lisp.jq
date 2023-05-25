@@ -39,7 +39,7 @@ def pairP(p):
   fmap(
     surr(
       openP;
-      foll(p; follR(ws1(chars(".")); p));
+      ws(foll(p; follR(ws1(chars(".")); p)));
       closeP);
     {car: .[0], cdr: .[1]});
 
@@ -67,7 +67,7 @@ def listP(p):
   fmap(
     surr(
       openP;
-      delimited(p; ws);
+      ws(delimited(p; ws));
       closeP);
     arr2ConsL);
 

@@ -99,8 +99,9 @@ def eval(environ):
   def apply($thing):
     if ($thing | has("lambda")) then
       ($thing.lambda) as $lambda |
-      (with_entries(.key |= ($lambda.fargs[.])) +
-       $lambda.environ) as $newEnv |
+      ($lambda.environ +
+       with_entries(.key |= ($lambda.fargs[.]))
+      ) as $newEnv |
       $lambda.body | eval($newEnv)
     elif ($thing | has("builtIn")) then
       (.) as $args |
@@ -133,6 +134,7 @@ def eval(environ):
   elif (isNIL) then .
   elif (isConsL) then
     (consL2Arr) as $l |
+
     if (($l | length == 3) and
         ($l[0] == {SYM: "lambda"}) and
         ($l[1] | isConsL))
@@ -140,6 +142,22 @@ def eval(environ):
       {lambda: {fargs: ($l[1]|consL2Arr|map(.SYM)),
                 body: $l[2],
                 environ: environ}}
+
+    elif (($l | length >= 3) and
+          ($l[0] == {SYM: "let"}) and
+          ($l[1] | isConsL))
+    then
+      ($l[1] | consL2Arr |
+       reduce .[] as $kv (
+         environ;
+         (.) as $envSoFar |
+         ($kv.car.SYM) as $k |
+         ($kv.cdr.car | eval($envSoFar)) as $v |
+         . + {"\($k)": $v})
+      ) as $newEnv |
+      ($l[2]) as $body |
+      $body | eval($newEnv)
+
     else # apply
       ($l[0] | eval(environ)) as $f |
       ($l[1:]| map(eval(environ))) as $args |

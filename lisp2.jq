@@ -132,13 +132,39 @@ def initBuiltins: reduce .[] as $name (
   {$environ, $mem} |
   .environ |= (. + {"\($name)": $loc}));
 
-def eval:
+def initEnv:
   (["+", "-", "*", "/", ">=", ">", "<=", "<", "=",
     "equal?", "empty?", "car", "cons", "cdr", "list"
-   ] | initBuiltins) as {$environ, $mem} |
-  eval($environ; $mem);
+   ] | initBuiltins);
 
-def read:  ws(sxprP) | if (length >= 1) then .[].a
-  else "parse error (sorry, can't tell you where)" | error end;
+def eval: (initEnv) as {$environ, $mem} | eval($environ; $mem);
 
-def readEvalShow: read | eval | .V | show;
+def readEvalGlobal:
+  oneOrMore(ws(sxprP)) |
+  if (length >= 1) then .[].a else "parse error (somewhere, sorry)" | error end |
+  reduce .[] as $sxpr (initEnv;
+    (.) as {$environ, $mem} |
+    ($sxpr) as {car: {SYM: $define},
+                cdr: {car: {SYM: $sym}, cdr: {car: $vsxpr}}} | # FIXME: assuming single expressions
+    ($sxpr) as {car: {SYM: $fdefine},
+                cdr: {car: {car: {SYM: $fsym}, cdr: { car: $formal, cdr: $formals} },
+                      cdr: {car: $bodySxpr}}} |
+    if (($define == "define") and ($sym|type == "string") and ($vsxpr != null)) then
+      $vsxpr | eval($environ; $mem) as {$mem, $V} |
+      $V | alloc($mem) as {$mem, $loc} |
+      {$environ, $mem, $V} | .environ |= (. + {"\($sym)": $loc})
+    elif (($fdefine == "define") and ($fsym|type=="string") and
+          ($formal|isSym) and ($formals|isConsL) and ($bodySxpr != null)) then
+      [{SYM: "lambda"}, {car:$formal, cdr:$formals}, $bodySxpr] | arr2ConsL |
+      eval($environ; $mem) as {$mem, $V} |
+      $V | alloc($mem) as {$mem, $loc} |
+      {$environ, $mem, $V} | .environ |= (. + {"\($fsym)": $loc})
+    elif ([$define, $fdefine] | any(. == "define")) then
+      "SYNTAX ERROR: (define x value) or (define (f arg1..) body)\nat \($sxpr|show)" | error
+    else
+      $sxpr | eval($environ; ($environ | recursiveEnv($mem))) as {$mem, $V} |
+      {$environ, $mem, $V}
+    end
+  );
+
+def readEvalShow: readEvalGlobal | .V | show;

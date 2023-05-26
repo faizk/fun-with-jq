@@ -16,6 +16,7 @@ def builtin_gt:     map(.N) | (.[0] >  .[1]) | {B: .};
 def builtin_eq:     map(.N) | (.[0] == .[1]) | {B: .};
 def builtin_equal:  (.[0] == .[1]) | {B: .};
 def builtin_empty:  (.[0] == null) | {B: .};
+def builtin_list:   arr2ConsL;
 
 # The `environ` is a map of `Str->Loc`, where `Loc` is just a number (an index in an array)
 def lookup($environ): (.) as $sym |
@@ -67,6 +68,7 @@ def eval(environ; $mem):
       elif ($f == "car")    then builtin_car
       elif ($f == "cdr")    then builtin_cdr
       elif ($f == "cons")   then builtin_cons
+      elif ($f == "list")   then builtin_list
       else "not a built-in? `\($f)`.." | error
       end
       | {$mem, V: .} # no new memory allocated by builtins!

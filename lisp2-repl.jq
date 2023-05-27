@@ -12,7 +12,7 @@ def showV: show |
        .environ |= (with_entries(select($environ[.key]==null))) |
        .body |= show) |
     "(λ (\(.fargs)) \(.body))" as $l |
-    "\($l | ansiFmt(.UNDERLINE, .GREEN.FG)) >>[env (sans built-ins): \(.environ|ansiFmt(.BRIGHT_BLACK.FG))]<<"
+    "\($l | ansiFmt(.UNDERLINE, .GREEN.FG)) >>[env (sans built-ins): \(.environ|ansiFmt(.GREEN.BG, .WHITE.FG))]<<"
   else ansiFmt(.GREEN.FG, .UNDERLINE) end;
 
 def trimmedR($s): [. | until(endswith($s) | not; rtrimstr($s))]   | last;
@@ -21,35 +21,35 @@ def trimmed($s): trimmedL($s) | trimmedR($s);
 
 def getNonEmptyInput: input | trimmed(" ") | if (length >= 1) then . else getNonEmptyInput end;
 
-def repl($environ; $mem):
+def repl($linesSoFar; $environ; $mem): ## FIXME: this is really buggy
   def evalPrint:
-    try
-      evalAllGlobal($environ; $mem) as {$environ, $mem, $V} |
-      ($V | showV), repl($environ; $mem)
-    catch
-      if (. != "break") then
-        ("ERROR: \(.)\n" | ansiFmt(.RED.BG, .WHITE.FG)), repl($environ; $mem)
-      else "BYE!" | ansiFmt(.BOLD, .BLUE.FG) end
-  ;
+    evalAllGlobal($environ; $mem) as {$environ, $mem, $V} |
+    ($V | showV), repl([]; $environ; $mem);
   def p: delimited(orElse(sxprP; snipP(sxprP)); oneOrMore(ws));
-  def keepGoing($linesSoFar):
+  def keepGoing:
+    ($linesSoFar + [.]) as $linesSoFar |
     $linesSoFar | join("\n") | p |
     if (length >= 1) then
       (.[].a | any(has("SNIP"))) as $stillCooking |
       if ($stillCooking) then
         ("-- MULTILINE --"|ansiFmt(.BLUE.BG, .WHITE.FG, .UNDERLINE)),
-        keepGoing($linesSoFar + [getNonEmptyInput])
-      else .[] | 
+        repl($linesSoFar; $environ; $mem)
+      else .[] |
         if (.rest | length >= 1) then (.a) as $a |
           "[WARN] ignoring trailing garbage: >>>\(.rest)<<<" | debug | $a
         else .a end |
-        evalPrint 
+        evalPrint
       end
     else
       error("parse error!")
     end
   ;
-  getNonEmptyInput | keepGoing([.])
+  try (getNonEmptyInput | keepGoing)
+  catch if (. == "break") then
+          ("BYE!" | ansiFmt(.BOLD, .BLUE.FG))
+        else
+          ("ERROR: \(.)\n" | ansiFmt(.RED.BG, .WHITE.FG)), repl([]; $environ; $mem)
+        end
 ;
 
-def repl: (initEnv) as {$environ, $mem} | repl($environ; $mem);
+def repl: (initEnv) as {$environ, $mem} | repl([]; $environ; $mem);

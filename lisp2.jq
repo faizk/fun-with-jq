@@ -128,8 +128,8 @@ def initEnv:
    ] | initBuiltins);
 
 def evalAllGlobal($environ; $mem):
-  def evalDefine($environ; $mem; $sym): # OUT: {$environ, $mem, $V}
-    eval($environ; $mem) as {$mem, $V} | $V | alloc($mem) as {$mem, $loc} |
+  def evalDefine($sym):  # OUT: {$environ, $mem, $V}
+    eval($environ; ($environ|recursiveEnv($mem))) as {$mem, $V} | $V | alloc($mem) as {$mem, $loc} |
     {$environ, $mem, $V} | .environ |= (. + {"\($sym)": $loc});
   reduce .[] as $sxpr ({$environ, $mem};
     (.) as {$environ, $mem} |
@@ -139,16 +139,15 @@ def evalAllGlobal($environ; $mem):
                 cdr: {car: {car: {SYM: $fsym}, cdr: { car: $formal, cdr: $formals} },
                       cdr: {car: $bodySxpr}}} |
     if (($define == "define") and ($sym|type == "string") and ($vsxpr != null)) then
-      $vsxpr | evalDefine($environ; $mem; $sym)
+      $vsxpr | evalDefine($sym)
     elif (($fdefine == "define") and ($fsym|type=="string") and
           ($formal|isSym) and ($formals|isConsL) and ($bodySxpr != null)) then
       [{SYM: "lambda"}, {car:$formal, cdr:$formals}, $bodySxpr] | arr2ConsL |
-      evalDefine($environ; $mem; $fsym)
+      evalDefine($fsym)
     elif ([$define, $fdefine] | any(. == "define")) then
       "SYNTAX ERROR: (define x value) or (define (f arg1..) body)\nat \($sxpr|show)" | error
     else
-      $sxpr | eval($environ; ($environ | recursiveEnv($mem))) as {$mem, $V} |
-      {$environ, $mem, $V}
+      $sxpr | evalDefine("~it")
     end
   );
 

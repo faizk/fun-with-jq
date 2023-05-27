@@ -4,7 +4,8 @@ def builtin_add:    map(.N) | add | {N: .};
 def builtin_sub:    map(.N) | (if (length >=2) then . else [0] + . end) |
                       reduce .[1:][] as $item (.[0]; . - $item);
 def builtin_mul:    map(.N) | reduce .[] as $item (1; . * $item) | {N: .};
-def builtin_div:    map(.N) | reduce .[] as $item (1; . / $item) | {N: .};
+def builtin_div:    map(.N) | (if (length >=2) then . else [1] + . end) | 
+                      reduce .[1:][] as $item (.[0]; . / $item) | {N: .};
 def builtin_car:    .[0].car;
 def builtin_cdr:    .[0].cdr;
 def builtin_cons:   {car: .[0], cdr: .[1]};

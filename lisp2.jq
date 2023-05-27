@@ -8,21 +8,6 @@ def numBoolOp(f):   map(assumeNum) | (if (length >= 1) then . else error("wrong 
                         if ((.B) and ({$l,$r} | f)) then {l: $r, B} else {$l, B: false} end) | {B};
 def assumeOne(f):   if (length != 1) then error("wrong arity, want 1, got \(length)") else .[0] | f end;
 def assumePair(f):  assumeOne(if (isCons) then f else error("type error: \(.) is not a cons cell") end);
-def builtin_add:    numOp(.l + .r; 0);
-def builtin_sub:    numOp(.l - .r; 0);
-def builtin_mul:    numOp(.l * .r; 1);
-def builtin_div:    numOp(.l / .r; 1);
-def builtin_car:    assumePair(.car);
-def builtin_cdr:    assumePair(.cdr);
-def builtin_cons:   {car: .[0], cdr: .[1]};
-def builtin_lte:    numBoolOp(.l <= .r);
-def builtin_lt:     numBoolOp(.l <  .r);
-def builtin_gte:    numBoolOp(.l >= .r);
-def builtin_gt:     numBoolOp(.l >  .r);
-def builtin_eq:     numBoolOp(.l == .r);
-def builtin_equal:  (.[0] == .[1])  | {B: .};
-def builtin_empty:  assumeOne(isNIL | {B: .});
-def builtin_list:   arr2ConsL;
 
 # The `environ` is a map of `Str->Loc`, where `Loc` is just a number (an index in an array)
 def lookup($environ): (.) as $sym | # Note that the "errors" thrown represent a bug in *this* code, not the users'
@@ -60,21 +45,21 @@ def eval(environ; $mem):
       $lambda.body | eval($lambda.environ + $argsEnv; $mem)
     elif ($thing | has("builtIn")) then
       ($thing.builtIn) as $f |
-      if   ($f == "+")      then builtin_add
-      elif ($f == "*")      then builtin_mul
-      elif ($f == "-")      then builtin_sub
-      elif ($f == "/")      then builtin_div
-      elif ($f == "<=")     then builtin_lte
-      elif ($f == "<")      then builtin_lt
-      elif ($f == ">=")     then builtin_gte
-      elif ($f == ">")      then builtin_gt
-      elif ($f == "=")      then builtin_eq
-      elif ($f == "equal?") then builtin_equal
-      elif ($f == "empty?") then builtin_empty
-      elif ($f == "car")    then builtin_car
-      elif ($f == "cdr")    then builtin_cdr
-      elif ($f == "cons")   then builtin_cons
-      elif ($f == "list")   then builtin_list
+      if   ($f == "+")      then numOp(.l + .r; 0)
+      elif ($f == "*")      then numOp(.l * .r; 1)
+      elif ($f == "-")      then numOp(.l - .r; 0)
+      elif ($f == "/")      then numOp(.l / .r; 1)
+      elif ($f == "<=")     then numBoolOp(.l <= .r)
+      elif ($f == "<")      then numBoolOp(.l <  .r)
+      elif ($f == ">=")     then numBoolOp(.l >= .r)
+      elif ($f == ">")      then numBoolOp(.l >  .r)
+      elif ($f == "=")      then numBoolOp(.l == .r)
+      elif ($f == "equal?") then (.[0] == .[1])  | {B: .}
+      elif ($f == "empty?") then assumeOne(isNIL | {B: .})
+      elif ($f == "car")    then assumePair(.car)
+      elif ($f == "cdr")    then assumePair(.cdr)
+      elif ($f == "cons")   then {car: .[0], cdr: .[1]}
+      elif ($f == "list")   then arr2ConsL
       else "not a built-in? `\($f)`.." | error
       end
       | {$mem, V: .} # no new memory allocated by builtins!

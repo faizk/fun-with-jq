@@ -28,6 +28,10 @@ def showV: show |
     "(λ (\(.fargs)) \(.body)) >>[env (sans built-ins): \(.environ)]<<"
   else ansiFmt(.GREEN.FG, .UNDERLINE) end;
 
+def trimmedR($s): [. | until(endswith($s) | not; rtrimstr($s))]   | last;
+def trimmedL($s): [. | until(startswith($s) | not; ltrimstr($s))] | last;
+def trimmed($s): trimmedL($s) | trimmedR($s);
+
 def repl($acc; $environ; $mem; p):
   def evalPrint: [.] |
     try
@@ -37,12 +41,12 @@ def repl($acc; $environ; $mem; p):
       if (. != "break") then
         ("ERROR: \(.)\n" | ansiFmt(.RED.BG, .WHITE.FG)), repl([]; $environ; $mem; maySnipP)
       else "BYE!" | ansiFmt(.BOLD, .BLUE.FG) end;
-  input | zeroOrMore(p) |
+  def getNonEmptyInput: input | trimmed(" ") | if (length >= 1) then . else getNonEmptyInput end;
+  getNonEmptyInput | p |
   if (length >= 1) then .[] |
     if (.rest | length >= 1) then
       ("[WARN] excess input: [\(.rest)]" | ansiFmt(.YELLOW.BG)), repl([]; $environ; $mem; p)
-    elif (.a | length == 0) then repl([]; $environ; $mem; p)
-    else .a[] |
+    else .a |
       if (has("SNIP")) then
         (.SNIP) as $soFar |
         def nextP: orElse(endSnipP(sxprP); snipOnP(sxprP));
@@ -55,7 +59,7 @@ def repl($acc; $environ; $mem; p):
       end
     end
   else
-    ("parse error" | ansiFmt(.REG.FG)), repl([]; $environ; $mem; p)
+    ("parse error" | ansiFmt(.REG.FG)), repl($acc; $environ; $mem; p)
   end
 ;
 

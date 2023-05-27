@@ -5,62 +5,51 @@ def snipP(p):
   def justOpenP: foll(openP; zeroOrMore(ws); []);
   fmap(orElse(openPAndP; justOpenP); {SNIP: .});
 
-def snipOnP(p):
-  fmap(ws(delimited(p; oneOrMore(ws))); {SNIP: .});
-
-def endSnipP(p):
-  foll(
-    orElse(
-      ws(delimited(p; oneOrMore(ws)));
-      fmap(zeroOrMore(ws); []));
-    ws(closeP);
-    {SNIPEND: .[0]});
-
-def maySnipP:
-  orElse(ws(sxprP); snipP(sxprP));
-
 def showV: show |
   if (type == "object" and has("lambda")) then
     (initEnv) as {$environ, $mem} |
     .lambda | (.fargs |= join(" ") |
        .environ |= (with_entries(select($environ[.key]==null))) |
        .body |= show) |
-    "(λ (\(.fargs)) \(.body)) >>[env (sans built-ins): \(.environ)]<<"
+    "(λ (\(.fargs)) \(.body))" as $l |
+    "\($l | ansiFmt(.UNDERLINE, .GREEN.FG)) >>[env (sans built-ins): \(.environ|ansiFmt(.BRIGHT_BLACK.FG))]<<"
   else ansiFmt(.GREEN.FG, .UNDERLINE) end;
 
 def trimmedR($s): [. | until(endswith($s) | not; rtrimstr($s))]   | last;
 def trimmedL($s): [. | until(startswith($s) | not; ltrimstr($s))] | last;
 def trimmed($s): trimmedL($s) | trimmedR($s);
 
-def repl($acc; $environ; $mem; p):
-  def evalPrint: [.] |
+def getNonEmptyInput: input | trimmed(" ") | if (length >= 1) then . else getNonEmptyInput end;
+
+def repl($environ; $mem):
+  def evalPrint:
     try
       evalAllGlobal($environ; $mem) as {$environ, $mem, $V} |
-      ($V | showV), repl([]; $environ; $mem; maySnipP)
+      ($V | showV), repl($environ; $mem)
     catch
       if (. != "break") then
-        ("ERROR: \(.)\n" | ansiFmt(.RED.BG, .WHITE.FG)), repl([]; $environ; $mem; maySnipP)
-      else "BYE!" | ansiFmt(.BOLD, .BLUE.FG) end;
-  def getNonEmptyInput: input | trimmed(" ") | if (length >= 1) then . else getNonEmptyInput end;
-  getNonEmptyInput | p |
-  if (length >= 1) then .[] |
-    if (.rest | length >= 1) then
-      ("[WARN] excess input: [\(.rest)]" | ansiFmt(.YELLOW.BG)), repl([]; $environ; $mem; p)
-    else .a |
-      if (has("SNIP")) then
-        (.SNIP) as $soFar |
-        def nextP: orElse(endSnipP(sxprP); snipOnP(sxprP));
-        repl($acc + $soFar; $environ; $mem; nextP)
-      elif (has("SNIPEND")) then
-        ($acc + .SNIPEND) |
-        arr2ConsL | evalPrint
-      else
-        evalPrint
+        ("ERROR: \(.)\n" | ansiFmt(.RED.BG, .WHITE.FG)), repl($environ; $mem)
+      else "BYE!" | ansiFmt(.BOLD, .BLUE.FG) end
+  ;
+  def p: delimited(orElse(sxprP; snipP(sxprP)); oneOrMore(ws));
+  def keepGoing($linesSoFar):
+    $linesSoFar | join("\n") | p |
+    if (length >= 1) then
+      (.[].a | any(has("SNIP"))) as $stillCooking |
+      if ($stillCooking) then
+        ("-- MULTILINE --"|ansiFmt(.BLUE.BG, .WHITE.FG, .UNDERLINE)),
+        keepGoing($linesSoFar + [getNonEmptyInput])
+      else .[] | 
+        if (.rest | length >= 1) then (.a) as $a |
+          "[WARN] ignoring trailing garbage: >>>\(.rest)<<<" | debug | $a
+        else .a end |
+        evalPrint 
       end
+    else
+      error("parse error!")
     end
-  else
-    ("parse error" | ansiFmt(.REG.FG)), repl($acc; $environ; $mem; p)
-  end
+  ;
+  getNonEmptyInput | keepGoing([.])
 ;
 
-def repl: (initEnv) as {$environ, $mem} | repl([]; $environ; $mem; maySnipP);
+def repl: (initEnv) as {$environ, $mem} | repl($environ; $mem);

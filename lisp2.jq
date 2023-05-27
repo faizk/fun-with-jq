@@ -1,5 +1,4 @@
-include "pc";
-include "sxpr";
+include "pc"; include "sxpr";
 
 def builtin_add:    map(.N) | add | {N: .};
 def builtin_sub:    map(.N) | (if (length >=2) then . else [0] + . end) |
@@ -19,7 +18,7 @@ def builtin_empty:  (.[0] == null) | {B: .};
 def builtin_list:   arr2ConsL;
 
 # The `environ` is a map of `Str->Loc`, where `Loc` is just a number (an index in an array)
-def lookup($environ): (.) as $sym |
+def lookup($environ): (.) as $sym | # Note that the "errors" thrown represent a bug in *this* code, not the users'
   if ($environ|has($sym)) then $environ[$sym] else "undefined var: \($sym)" | error end;
 # `Loc`s are indexes in the `mem`, which is an array that we just pass around.
 def fetch($mem): (.) as $loc | $mem[$loc] |
@@ -129,20 +128,18 @@ def initBuiltins: reduce .[] as $name (
   {environ: {}, mem: []};
   (.environ) as $environ | (.mem) as $mem |
   {builtIn: $name} | alloc($mem) as {$mem, $loc} |
-  {$environ, $mem} |
-  .environ |= (. + {"\($name)": $loc}));
+  {$environ, $mem} | .environ |= (. + {"\($name)": $loc}));
 
 def initEnv:
   (["+", "-", "*", "/", ">=", ">", "<=", "<", "=",
     "equal?", "empty?", "car", "cons", "cdr", "list"
    ] | initBuiltins);
 
-def eval: (initEnv) as {$environ, $mem} | eval($environ; $mem);
-
-def readEvalGlobal:
-  oneOrMore(ws(sxprP)) |
-  if (length >= 1) then .[].a else "parse error (somewhere, sorry)" | error end |
-  reduce .[] as $sxpr (initEnv;
+def evalAllGlobal($environ; $mem):
+  def evalDefine($environ; $mem; $sym): # OUT: {$environ, $mem, $V}
+    eval($environ; $mem) as {$mem, $V} | $V | alloc($mem) as {$mem, $loc} |
+    {$environ, $mem, $V} | .environ |= (. + {"\($sym)": $loc});
+  reduce .[] as $sxpr ({$environ, $mem};
     (.) as {$environ, $mem} |
     ($sxpr) as {car: {SYM: $define},
                 cdr: {car: {SYM: $sym}, cdr: {car: $vsxpr}}} | # FIXME: assuming single expressions
@@ -150,15 +147,11 @@ def readEvalGlobal:
                 cdr: {car: {car: {SYM: $fsym}, cdr: { car: $formal, cdr: $formals} },
                       cdr: {car: $bodySxpr}}} |
     if (($define == "define") and ($sym|type == "string") and ($vsxpr != null)) then
-      $vsxpr | eval($environ; $mem) as {$mem, $V} |
-      $V | alloc($mem) as {$mem, $loc} |
-      {$environ, $mem, $V} | .environ |= (. + {"\($sym)": $loc})
+      $vsxpr | evalDefine($environ; $mem; $sym)
     elif (($fdefine == "define") and ($fsym|type=="string") and
           ($formal|isSym) and ($formals|isConsL) and ($bodySxpr != null)) then
       [{SYM: "lambda"}, {car:$formal, cdr:$formals}, $bodySxpr] | arr2ConsL |
-      eval($environ; $mem) as {$mem, $V} |
-      $V | alloc($mem) as {$mem, $loc} |
-      {$environ, $mem, $V} | .environ |= (. + {"\($fsym)": $loc})
+      evalDefine($environ; $mem; $fsym)
     elif ([$define, $fdefine] | any(. == "define")) then
       "SYNTAX ERROR: (define x value) or (define (f arg1..) body)\nat \($sxpr|show)" | error
     else
@@ -167,4 +160,8 @@ def readEvalGlobal:
     end
   );
 
-def readEvalShow: readEvalGlobal | .V | show;
+def readEvalAllGlobal: oneOrMore(ws(sxprP)) |
+  if (length >= 1) then .[].a else "parse error (somewhere, sorry)" | error end |
+  (initEnv) as {$environ, $mem} | evalAllGlobal($environ; $mem);
+
+def readEvalAll: readEvalAllGlobal | .V | show;

@@ -1,21 +1,27 @@
 include "pc"; include "sxpr";
 
-def builtin_add:    map(.N) | add | {N: .};
-def builtin_sub:    map(.N) | (if (length >=2) then . else [0] + . end) |
-                      reduce .[1:][] as $item (.[0]; . - $item);
-def builtin_mul:    map(.N) | reduce .[] as $item (1; . * $item) | {N: .};
-def builtin_div:    map(.N) | (if (length >=2) then . else [1] + . end) | 
-                      reduce .[1:][] as $item (.[0]; . / $item) | {N: .};
-def builtin_car:    .[0].car;
-def builtin_cdr:    .[0].cdr;
+def assumeNum:      if (.N | type != "number") then error("type error: not a number: \(.)") else .N end;
+def numOp(f; $id):  map(assumeNum) | (if (length >= 2) then . else [$id] + . end) |
+                      reduce .[1:][] as $r (.[0]; {l: ., $r} | f) | {N: .};
+def numBoolOp(f):   map(assumeNum) | (if (length >= 1) then . else error("wrong arity, need at least 1") end) |
+                      reduce .[1:][] as $r ({l: .[0], B: true}; (.l) as $l |
+                        if ((.B) and ({$l,$r} | f)) then {l: $r, B} else {$l, B: false} end) | {B};
+def assumeOne(f):   if (length != 1) then error("wrong arity, want 1, got \(length)") else .[0] | f end;
+def assumePair(f):  assumeOne(if (isCons) then f else error("type error: \(.) is not a cons cell") end);
+def builtin_add:    numOp(.l + .r; 0);
+def builtin_sub:    numOp(.l - .r; 0);
+def builtin_mul:    numOp(.l * .r; 1);
+def builtin_div:    numOp(.l / .r; 1);
+def builtin_car:    assumePair(.car);
+def builtin_cdr:    assumePair(.cdr);
 def builtin_cons:   {car: .[0], cdr: .[1]};
-def builtin_lte:    map(.N) | (.[0] <= .[1]) | {B: .};
-def builtin_lt:     map(.N) | (.[0] <  .[1]) | {B: .};
-def builtin_gte:    map(.N) | (.[0] >= .[1]) | {B: .};
-def builtin_gt:     map(.N) | (.[0] >  .[1]) | {B: .};
-def builtin_eq:     map(.N) | (.[0] == .[1]) | {B: .};
-def builtin_equal:  (.[0] == .[1]) | {B: .};
-def builtin_empty:  (.[0] == null) | {B: .};
+def builtin_lte:    numBoolOp(.l <= .r);
+def builtin_lt:     numBoolOp(.l <  .r);
+def builtin_gte:    numBoolOp(.l >= .r);
+def builtin_gt:     numBoolOp(.l >  .r);
+def builtin_eq:     numBoolOp(.l == .r);
+def builtin_equal:  (.[0] == .[1])  | {B: .};
+def builtin_empty:  assumeOne(isNIL | {B: .});
 def builtin_list:   arr2ConsL;
 
 # The `environ` is a map of `Str->Loc`, where `Loc` is just a number (an index in an array)

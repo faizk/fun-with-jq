@@ -50,7 +50,7 @@ def isQ:      has("Q");
 def isQQ:     has("QQ");
 def isUQ:     has("UQ");
 def isAtom:   isLitNum or isBool or isSym or isNIL;
-def isCons:   has("car") and has("cdr");
+def isCons:   has("car") and has("cdr") and (length == 2);
 
 def consL2Arr:
   if (isCons) then [.car] + (.cdr | consL2Arr)

@@ -18,6 +18,9 @@ def fetch($mem): (.) as $loc | $mem[$loc] |
 def nextLoc($mem): ($mem | length);
 def alloc($mem): (.) as $V | (nextLoc($mem)) as $loc |
   ($mem | (.[$loc] = {$V})) as $mem | {$mem, $loc};
+# IN: sxpr V; out: {$environ, $mem}
+def allocAssoc($sym; $environ; $mem): alloc($mem) as {$mem, $loc} |
+  {$environ, $mem} | .environ |= (. + {"\($sym)": $loc});
 
 # in ENV; out: MEM - this is used to convert a `let` behaviour to `letrec`-like behaviour
 def recursiveEnv($mem):
@@ -79,17 +82,14 @@ def eval(environ; $mem):
     if (({SYM: "lambda"} == $l[0]) and ($l|length == 3) and ($l[1]|isConsL)) then
       {lambda: {fargs: ($l[1]|consL2Arr|map(.SYM)),
                 body: $l[2],
-                environ: environ}
-      } | {$mem, V: .}
+                environ: environ}} | {$mem, V: .}
 
     elif (({SYM: "let"} == $l[0]) and ($l|length >= 3) and ($l[1]|isConsL)) then
       (reduce ($l[1]|consL2Arr)[] as {car: {SYM: $k}, cdr: {car: $vexp}} (
          {environ: environ, $mem};
          (.environ) as $environ | (.mem) as $mem |
          ($vexp | eval($environ; $mem)) as {$mem, $V} |
-         ($V | alloc($mem)) as {$mem, $loc} |
-         {$environ, $mem} |
-         .environ |= (. + {"\($k)": $loc})
+         ($V | allocAssoc($k; $environ; $mem))
       )) as {$environ, $mem} |
       ($l[2]) as $body |
       $body | eval($environ; $environ|recursiveEnv($mem))
@@ -117,10 +117,8 @@ def eval(environ; $mem):
 
 # in: [Str]; out: {$environ, $mem} # where $environ is a Map[Str->Loc], $mem is an array
 def initBuiltins: reduce .[] as $name (
-  {environ: {}, mem: []};
-  (.environ) as $environ | (.mem) as $mem |
-  {builtIn: $name} | alloc($mem) as {$mem, $loc} |
-  {$environ, $mem} | .environ |= (. + {"\($name)": $loc}));
+  {environ: {}, mem: []}; (.environ) as $environ | (.mem) as $mem |
+  {builtIn: $name} | allocAssoc($name; $environ; $mem));
 
 def initEnv:
   (["+", "-", "*", "/", ">=", ">", "<=", "<", "=",
@@ -129,8 +127,8 @@ def initEnv:
 
 def evalAllGlobal($environ; $mem):
   def evalDefine($environ; $mem; $sym):  # OUT: {$environ, $mem, $V}
-    eval($environ; ($environ|recursiveEnv($mem))) as {$mem, $V} | $V | alloc($mem) as {$mem, $loc} |
-    {$environ, $mem, $V} | .environ |= (. + {"\($sym)": $loc});
+    eval($environ; ($environ|recursiveEnv($mem))) as {$mem, $V} | $V |
+    allocAssoc($sym; $environ; $mem) + {$V};
   reduce .[] as $sxpr ({$environ, $mem};
     (.) as {$environ, $mem} |
     ($sxpr) as {car: {SYM: $define},

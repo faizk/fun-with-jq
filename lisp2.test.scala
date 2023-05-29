@@ -122,6 +122,24 @@ class Lisp2PropTests extends munit.ScalaCheckSuite {
       Right(Lit(6)))
   }
 
+  check("uq not in qq", """
+    (+ 1 ,2)
+    """ -> "unqoute: not in quasiquote: [,2]".asLeft)
+  property("qq like q without uq") {
+    forAll { (e: Sxpr) =>
+      println(e.show)
+      assertEquals(eval(show"'$e"), eval(show"`$e"))
+    }
+  }
+  checkOK("qq like q without", """
+    `(+ 1 2)
+    """ -> Pair(Sym("+"), Pair(Lit(1), Pair(Lit(2), NIL))))
+  checkOK("qq with uq atom", """
+    `(+ 1 ,2)
+    """ -> Pair(Sym("+"), Pair(Lit(1), Pair(Lit(2), NIL))))
+  checkOK("qq with uq sxpr eval'd", """
+    `(+ 1 ,(+ 1 2))
+    """ -> Pair(Sym("+"), Pair(Lit(1), Pair(Lit(3), NIL))))
 }
 
 object Lisp2PropTests {

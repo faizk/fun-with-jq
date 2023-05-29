@@ -14,6 +14,8 @@ package object lisp2 { import pc2._
   case object NIL extends Atom
   case class  Pair(l: Sxpr, r: Sxpr) extends Sxpr
   case class Qt(sxpr: Sxpr) extends Sxpr
+  case class Qqt(sxpr: Sxpr) extends Sxpr
+  case class Uqt(sxpr: Sxpr) extends Sxpr
   object SxprSeq {
     def unapplySeq(sxpr: Sxpr): Option[Seq[Sxpr]] = sxpr match {
       case Pair(h: Sxpr, SxprSeq(t@_*)) => Some(h +: t)
@@ -35,14 +37,16 @@ package object lisp2 { import pc2._
     .reject { case '.' => err("can't contain '.'") } // TODO: they actually can, just that `.` isn't a valid sym
     .map[String=>String](c => c +: _) <*> symCP.repeated.orEmpty.map(_.mkString) map (Sym(_))
   val zilchP: Parser[NIL.type] = char('(') >> (ws|yawn) >> char(')') as NIL
-  lazy val qteP: Parser[Qt] = char('\'') >> sxprP map Qt.apply
+  lazy val qteP:  Parser[Qt]   = char('\'') >> sxprP map Qt.apply
+  lazy val qqteP: Parser[Qqt]  = char('`') >> sxprP map Qqt.apply
+  lazy val uqteP: Parser[Uqt]  = char(',') >> sxprP map Uqt.apply
   lazy val listP: Parser[Sxpr] =
     yawn >> sxprP >>= (l => (((ws|yawn) >> listP) <+> happy(NIL)) map (r => Pair(l, r)))
   lazy val cellP: Parser[Pair] = yawn >>
     (sxprP <* (ws >> char('.') >> ws) map (l => Pair(l, _))) <*> sxprP
-  lazy val consP:  Parser[Sxpr] = char('(') >> (cellP|listP) <* (ws|yawn) <* char(')')
-  lazy val sxprP: Parser[Sxpr] = yawn >> qteP | litPosIntP | symP | consP <+> zilchP
-  lazy val readP:  Parser[Sxpr] = (ws|yawn) >> sxprP <* (ws|yawn)
+  lazy val consP: Parser[Sxpr] = char('(') >> (cellP|listP) <* (ws|yawn) <* char(')')
+  lazy val sxprP: Parser[Sxpr] = yawn >> (qteP|qqteP|uqteP) | litPosIntP | symP | consP <+> zilchP
+  lazy val readP: Parser[Sxpr] = (ws|yawn) >> sxprP <* (ws|yawn)
 
   type Env = Map[Sym, Loc]
   type Loc = Int
@@ -105,10 +109,16 @@ package object lisp2 { import pc2._
     { case s: Sym => s.asRight; case e => show"syntax error: bad arg [$e]".asLeft }
 
   def eval(e: Sxpr, env: Env)(mem: Mem): Either[String, (Mem, Value)] = e match {
-    case Qt(sxpr)    => Right(mem -> sxpr)
-    case lit: Lit[_] => Right(mem -> lit)
-    case sym: Sym    => env.get(sym).toRight(left = show"undefined variable: [$sym]") >>= (s => mem.fetch(s).map(mem -> _))
-    case NIL         => Right(mem -> NIL)
+    case Qt(sxpr)     => Right(mem -> sxpr)
+    case lit: Lit[_]  => Right(mem -> lit)
+    case sym: Sym     => env.get(sym).toRight(left = show"undefined variable: [$sym]") >>= (s => mem.fetch(s).map(mem -> _))
+    case NIL          => Right(mem -> NIL)
+    case Qqt(SxprSeq(l@_*)) => l.toList.reverse.foldM(mem -> (NIL: Value)) {
+        case ((m, acc), Uqt(sxpr)) => eval(sxpr, env)(m).map(_ map (v => Pair(v, acc)))
+        case ((m, acc), sxpr)      => Right(m -> Pair(sxpr, acc))
+      }
+    case Qqt(sxpr)    => Right(mem -> sxpr)
+    case Uqt(sxpr)    => Left(show"unqoute: not in quasiquote: [,$sxpr]")
     case SxprSeq(Sym("let"), SxprSeq(bindings@_*), body: Sxpr) => for { // NOTE: this is actually `let*`
         kvs          <- bindings.map(kvPair).sequence
         upd          <- kvs.foldM(mem -> env) { case ((m, env), (sym, ve)) =>
@@ -149,6 +159,8 @@ package object lisp2 { import pc2._
     case Sym(name)                                => show"""$name"""
     case NIL                                      => "()"
     case Qt(sxpr)                                 => show"""'$sxpr"""
+    case Qqt(sxpr)                                => show"""`$sxpr"""
+    case Uqt(sxpr)                                => show""",$sxpr"""
     case Pair(car, NIL) if prefs.renderConsList   => show"""($car)"""
     case Pair(h, SxprSeq(t@_*)) if prefs.renderConsList =>
       (h +: t).map(_.show).mkString("(", " ", ")")

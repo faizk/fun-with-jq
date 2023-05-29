@@ -77,4 +77,6 @@ def show:
   elif (isSym) then .SYM
   elif (isBool) then if (.B) then "#t" else "#f" end
   elif (isQ) then "'\(.Q|show)"
+  elif (isQQ) then "`\(.QQ|show)"
+  elif (isUQ) then ",\(.UQ|show)"
   else . end;

@@ -110,6 +110,19 @@ def eval(environ; $mem):
       $args | apply($f; $mem)
     end
 
+  elif (isQQ and isAtom) then {$mem, V: .QQ}
+  elif (isQQ) then .QQ |
+    reduce (consL2Arr|reverse[]) as $i (
+      {$mem, V: null}; (.mem) as $mem |
+      if ($i | isUQ) then
+        ($i.UQ | eval(environ; $mem)) as {$mem, $V} |
+        .mem = $mem |
+        .V |= {car: $V, cdr: .}
+      else
+        .V |= {car: $i, cdr: .}
+      end
+    )
+
   else
     "SYNTAX ERROR: \(.)" | error
   end

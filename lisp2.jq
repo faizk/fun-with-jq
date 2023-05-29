@@ -110,7 +110,7 @@ def eval(environ; $mem):
       $args | apply($f; $mem)
     end
 
-  elif (isQQ and isAtom) then {$mem, V: .QQ}
+  elif (isQQ and (.QQ|isAtom)) then {$mem, V: .QQ}
   elif (isQQ) then .QQ |
     reduce (consL2Arr|reverse[]) as $i (
       {$mem, V: null}; (.mem) as $mem |

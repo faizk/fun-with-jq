@@ -1,17 +1,19 @@
 include "pc"; include "sxpr";
 
+def assumeArity(cond; $msg): if (length | cond) then . else error("arity mismatch: given \(length) for expected \($msg)") end;
+def assumeArityEq($expected): assumeArity(. == $expected; $expected);
 def assumeNum:      if (.N | type != "number") then error("type error: not a number: \(.)") else .N end;
 def numOp(f; $id):  map(assumeNum) | (if (length >= 2) then . else [$id] + . end) |
                       reduce .[1:][] as $r (.[0]; {l: ., $r} | f) | {N: .};
-def numBoolOp(f):   map(assumeNum) | (if (length >= 1) then . else error("wrong arity, need at least 1") end) |
+def numBoolOp(f):   map(assumeNum) | assumeArity(. >= 1; ">= 1") |
                       reduce .[1:][] as $r ({l: .[0], B: true}; (.l) as $l |
                         if ((.B) and ({$l,$r} | f)) then {l: $r, B} else {$l, B: false} end) | {B};
-def assumeOne(f):   if (length != 1) then error("wrong arity, want 1, got \(length)") else .[0] | f end;
+def assumeOne(f):   assumeArityEq(1) | .[0] | f;
 def assumePair(f):  assumeOne(if (isCons) then f else error("type error: \(.) is not a cons cell") end);
 
 # The `environ` is a map of `Str->Loc`, where `Loc` is just a number (an index in an array)
 def lookup($environ): (.) as $sym | # Note that the "errors" thrown represent a bug in *this* code, not the users'
-  if ($environ|has($sym)) then $environ[$sym] else "undefined var: \($sym)" | error end;
+  if ($environ|has($sym)) then $environ[$sym] else "undefined variable: [\($sym)]" | error end;
 # `Loc`s are indexes in the `mem`, which is an array that we just pass around.
 def fetch($mem): (.) as $loc | $mem[$loc] |
   if ((type == "object") and (has("V"))) then .V else "NPE @ \($loc)" | error end;
@@ -38,7 +40,7 @@ def recursiveEnv($mem):
 def eval(environ; $mem):
   def apply($thing; $mem):
     if ($thing | has("lambda")) then
-      ($thing.lambda) as $lambda |
+      ($thing.lambda) as $lambda | assumeArityEq($lambda.fargs|length) |
       (reduce .[] as $arg (
           {$mem, locs: []};
           (.locs) as $locs | (.mem) as $mem |
@@ -77,14 +79,14 @@ def eval(environ; $mem):
   elif (isNIL)   then {$mem, V:.}
   elif (isSym)   then .SYM | lookup(environ) | fetch($mem) | {$mem, V: .}
 
-  elif (isConsL) then (consL2Arr) as $l |
+  elif (isConsL) then (consL2Arr) as $l | def kw($w): ($l[0] == {SYM: $w});
 
-    if (({SYM: "lambda"} == $l[0]) and ($l|length == 3) and ($l[1]|isConsL)) then
+    if (kw("lambda") and ($l|length == 3) and ($l[1]|isConsL)) then
       {lambda: {fargs: ($l[1]|consL2Arr|map(.SYM)),
                 body: $l[2],
                 environ: environ}} | {$mem, V: .}
 
-    elif (({SYM: "let"} == $l[0]) and ($l|length >= 3) and ($l[1]|isConsL)) then
+    elif ((kw("let") or kw("letrec")) and ($l|length >= 3) and ($l[1]|isConsL)) then
       (reduce ($l[1]|consL2Arr)[] as {car: {SYM: $k}, cdr: {car: $vexp}} (
          {environ: environ, $mem};
          (.environ) as $environ | (.mem) as $mem |
@@ -92,9 +94,9 @@ def eval(environ; $mem):
          ($V | allocAssoc($k; $environ; $mem))
       )) as {$environ, $mem} |
       ($l[2]) as $body |
-      $body | eval($environ; $environ|recursiveEnv($mem))
+      $body | eval($environ; if (kw("letrec")) then $environ|recursiveEnv($mem) else $mem end)
 
-    elif (({SYM: "if"} == $l[0]) and ($l|length == 4)) then
+    elif (kw("if") and ($l|length == 4)) then
       ($l[1:]) as [$condE, $thenE, $elseE] |
       ($condE | eval(environ; $mem)) as {$mem, $V} |
       (if ($V == {B: false}) then $elseE else $thenE end) |
@@ -110,9 +112,7 @@ def eval(environ; $mem):
       $args | apply($f; $mem)
     end
 
-  elif (isQQ and (.QQ|isAtom)) then {$mem, V: .QQ}
-  elif (isQQ) then .QQ |
-    reduce (consL2Arr|reverse[]) as $i (
+  elif (isQQ and (.QQ|isConsL)) then .QQ | reduce (consL2Arr|reverse[]) as $i (
       {$mem, V: null}; (.mem) as $mem |
       if ($i | isUQ) then
         ($i.UQ | eval(environ; $mem)) as {$mem, $V} |
@@ -122,6 +122,12 @@ def eval(environ; $mem):
         .V |= {car: $i, cdr: .}
       end
     )
+  elif (isQQ and (.QQ|isCons)) then .QQ | {car,cdr} | reduce to_entries[] as {$key, $value} (
+      {$mem, V: {}}; (.mem) as $mem |
+      ($value | if (isUQ) then .UQ | eval(environ; $mem) else {$mem, V: .} end) as {$mem, $V} |
+      .V[$key] = $V | .mem = $mem)
+  elif (isQQ) then {$mem, V: .QQ }
+  elif (isUQ) then error("unqoute: not in quasiquote: [\(show)]")
 
   else
     "SYNTAX ERROR: \(.)" | error

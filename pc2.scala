@@ -53,6 +53,7 @@ object pc2 {
   val posIntP: Parser[Int] = oneOrMore(digit) map {
     _.reverse.zipWithIndex.map { case (d,p) => d * math.pow(10,p).toInt }.sum
   }
+  val intP: Parser[Int] = (char('-') *> posIntP map (-_)) <+> posIntP
 
   implicit class ParserOps[+A](l: Parser[A]) {
     def |[B >: A](r: => Parser[B]): Parser[B] = s => l(s) orElse r(s)

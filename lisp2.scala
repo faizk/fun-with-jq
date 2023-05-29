@@ -28,7 +28,7 @@ package object lisp2 { import pc2._
     typeErr(s"${got.getClass.getName} != ${want.getName}").asLeft
   val wsChars: Set[Char] = " \t\n".toSet
   val ws: Parser[Unit] = wsChars.map(char).reduce(_ <+> _).repeated.void
-  val litPosIntP: Parser[Lit[Int]] = posIntP map (Lit(_))
+  val litIntP: Parser[Lit[Int]] = intP map (Lit(_))
   val symCP: Parser[Char] = anyChar
     .reject { case c@(','|'`'|'\''|'('|')') => err(s"can't contain [$c]") }
     .reject { case c if wsChars contains c  => err("can't contain whitespace") }
@@ -36,7 +36,9 @@ package object lisp2 { import pc2._
     .reject { case c if c >= '0' && c <= '9' => err("can't start with number") }
     .reject { case '.' => err("can't contain '.'") } // TODO: they actually can, just that `.` isn't a valid sym
     .map[String=>String](c => c +: _) <*> symCP.repeated.orEmpty.map(_.mkString) map (Sym(_))
-  val zilchP: Parser[NIL.type] = char('(') >> (ws|yawn) >> char(')') as NIL
+  val zilchP: Parser[Sxpr] = char('(') >> (ws|yawn) >> char(')') as NIL
+  val boolP: Parser[Lit[Boolean]] = (word("#t") as Lit(true)) <+> (word("#f") as Lit(false))
+  val atomP: Parser[Sxpr] = boolP | litIntP | symP | zilchP
   lazy val qteP:  Parser[Qt]   = char('\'') >> sxprP map Qt.apply
   lazy val qqteP: Parser[Qqt]  = char('`') >> sxprP map Qqt.apply
   lazy val uqteP: Parser[Uqt]  = char(',') >> sxprP map Uqt.apply
@@ -45,7 +47,7 @@ package object lisp2 { import pc2._
   lazy val cellP: Parser[Pair] = yawn >>
     (sxprP <* (ws >> char('.') >> ws) map (l => Pair(l, _))) <*> sxprP
   lazy val consP: Parser[Sxpr] = char('(') >> (cellP|listP) <* (ws|yawn) <* char(')')
-  lazy val sxprP: Parser[Sxpr] = yawn >> (qteP|qqteP|uqteP) | litPosIntP | symP | consP <+> zilchP
+  lazy val sxprP: Parser[Sxpr] = yawn >> (qteP|qqteP|uqteP) | atomP | consP
   lazy val readP: Parser[Sxpr] = (ws|yawn) >> sxprP <* (ws|yawn)
 
   type Env = Map[Sym, Loc]
@@ -114,7 +116,7 @@ package object lisp2 { import pc2._
     case sym: Sym     => env.get(sym).toRight(left = show"undefined variable: [$sym]") >>= (s => mem.fetch(s).map(mem -> _))
     case NIL          => Right(mem -> NIL)
     case Qqt(SxprSeq(l@_*)) => l.toList.reverse.foldM(mem -> (NIL: Value)) {
-        case ((m, acc), Uqt(sxpr)) => eval(sxpr, env)(m).map(_ map (v => Pair(v, acc)))
+        case ((m, acc), Uqt(sxpr)) => eval(sxpr, env)(m).map(_ map (Pair(_, acc)))
         case ((m, acc), sxpr)      => Right(m -> Pair(sxpr, acc))
       }
     case Qqt(sxpr)    => Right(mem -> sxpr)

@@ -12,6 +12,7 @@ def openP: chars("(");
 def closeP: chars(")");
 
 def boolP: orElse(fmap(chars("#t"); {B: true}); fmap(chars("#f"); {B: false}));
+def nilP: foll(openP; follR(zeroOrMore(ws); closeP); null);
 
 def atomCP:
   exceptP(
@@ -21,7 +22,7 @@ def atomCP:
     anyChar);
 
 def atomP:
-  orElse(foll(openP; ws(closeP); null);
+  orElse(nilP;
     orElse(fmap(numConstP; {N: .});
       orElse(boolP;
         fmap(oneOrMore(atomCP); {SYM: join("")}))));

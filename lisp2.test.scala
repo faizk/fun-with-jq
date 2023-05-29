@@ -6,28 +6,78 @@ package tut
 import cats._, data._, syntax.all._
 import org.scalacheck._, Prop._, Arbitrary.arbitrary, org.scalacheck.Prop.propBoolean
 
-class Lisp2PropTests extends munit.ScalaCheckSuite {
+trait TestFunctions {
+  import lisp2._
+  val readFriendly: Seq[Char] => Either[Err, Sxpr]
+  val evalFriendly: Seq[Char] => Either[Err, Value]
+}
+
+class Lisp2_bInJqTests extends Lisp2AbstractTests with TestFunctions {
+  import lisp2._
+  import pc2utils._
+  import scala.sys.process._
+
+  val jqRead = """
+    include "sxpr"; sxprP[].a | show
+  """
+  val jqEval = """
+    include "lisp2"; readEvalAll
+  """
+
+  val jqSlurpCmd = Seq("jq", "-Rs", "-cr")
+
+  def inps(s: Seq[Char]) = new java.io.ByteArrayInputStream(s.mkString.getBytes)
+
+  val jqErrRe = """^jq: error \(at <stdin>:[0-9]+\):\s*(.+)""".r
+  val stripJqErrorPrefix: String => String = {
+    case jqErrRe(msg) => msg
+    case whatever     => whatever
+  }
+
+  def jqSlurp(code: String, input: Seq[Char]): Either[Err, Seq[Char]] = {
+    val outb = new StringBuilder
+    val errb = new StringBuilder
+    val logger = ProcessLogger(outb append _, errb append _)
+    ((jqSlurpCmd :+ code) #< inps(input)) ! logger match {
+      case 0 if errb.isEmpty => outb.toSeq.asRight
+      case 0 => System.err.println(errb.mkString); outb.toSeq.asRight
+      case e if errb.isEmpty => s"[exit $e] jq failed: >>>$code<<<, input: $input".asLeft
+      case e => errb.mkString.asLeft.leftMap(stripJqErrorPrefix)
+    }
+  }
+
+  lazy val readFriendly = in => jqSlurp(jqRead, in) >>= lisp2.readP.friendly
+  lazy val evalFriendly = in => jqSlurp(jqEval, in) >>= lisp2.readP.friendly
+}
+
+class Lisp2_aTests extends Lisp2AbstractTests with TestFunctions {
+  import lisp2._
+  import pc2utils._
+  lazy val readFriendly = lisp2.readP.friendly
+  lazy val evalFriendly = readFriendly andThenF (lisp2.eval(_))
+}
+
+abstract class Lisp2AbstractTests extends munit.ScalaCheckSuite with TestFunctions {
   import lisp2._
   import Lisp2PropTests._
 
   import pc2utils._
 
+  val eval = evalFriendly
+
   property("all s-expressions can be parsed") {
     forAll { (e: Sxpr) =>
-      println(e.show)
-      assertEquals(readP.friendly(e.show), Right(e))
+      assertEquals(readFriendly(e.show), Right(e))
     }
  }
 
   property("all s-expressions can be parsed, even when cons-list rendering is off") {
     implicit val rPrefs = ShowPrefs(renderConsList = false)
     forAll { (e: Sxpr) =>
-      println(e.show)
-      assertEquals(readP.friendly(e.show), Right(e))
+      assertEquals(readFriendly(e.show), Right(e))
     }
   }
 
-  val eval = lisp2.readP.friendly andThenF (lisp2.eval(_))
 
   property("built-in `empty?` considers only `'()` as empty") {
     forAll { (e: Sxpr) =>
@@ -127,7 +177,6 @@ class Lisp2PropTests extends munit.ScalaCheckSuite {
     """ -> "unqoute: not in quasiquote: [,2]".asLeft)
   property("qq like q without uq") {
     forAll { (e: Sxpr) =>
-      println(e.show)
       assertEquals(eval(show"'$e"), eval(show"`$e"))
     }
   }

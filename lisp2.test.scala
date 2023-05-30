@@ -29,9 +29,11 @@ class Lisp2_bInJqTests extends Lisp2AbstractTests with TestFunctions {
   def inps(s: Seq[Char]) = new java.io.ByteArrayInputStream(s.mkString.getBytes)
 
   val jqErrRe = """^jq: error \(at <stdin>:[0-9]+\):\s*(.+)""".r
+  val jqStderrRe = """^"(.+)"""".r
   val stripJqErrorPrefix: String => String = {
-    case jqErrRe(msg) => msg
-    case whatever     => whatever
+    case jqErrRe(msg)    => msg
+    case jqStderrRe(msg) => msg
+    case whatever        => whatever
   }
 
   def jqSlurp(code: String, input: Seq[Char]): Either[Err, Seq[Char]] = {

@@ -53,3 +53,24 @@ def repl($linesSoFar; $environ; $mem): ## FIXME: this is really buggy
 ;
 
 def repl: (initEnv) as {$environ, $mem} | repl([]; $environ; $mem);
+
+# a more rufimentary REPL that requires 2 blank lines for execution
+# unlike an actual REPL, won't save state between executions
+def multilineReadEvalAll:
+  foreach inputs as $line (
+    {emptyLines: 0, buffer:[], ready: []}
+    ;
+    if ($line | length >= 1) then
+      .buffer |= (. + [$line]) | .emptyLines = 0
+    else
+      .emptyLines |= (. + 1) |
+      if (.emptyLines >= 2) then .ready = .buffer | .buffer = [] else . end
+    end
+    ;
+    if ((.emptyLines == 2) and (.ready | length >= 1)) then
+      .ready | join("\n") |
+      try readEvalAll
+      catch if (. == "break") then "BYE" else stderr | multilineReadEvalAll end
+    else empty end
+  );
+

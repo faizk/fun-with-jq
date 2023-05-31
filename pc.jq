@@ -15,6 +15,8 @@ def anyChar:
 def orElse(lp; rp):
   (lp) as $l |
   (if ($l | length >= 1) then $l else rp end);
+# pass in multiple parsers with `,` (not `;`): anyOf(p1, p2, p3, ..)
+def anyOf(p): [first(p | select(length >= 1))[]];
 
 def oneOrMore(p):
   p |

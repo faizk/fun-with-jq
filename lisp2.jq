@@ -25,16 +25,15 @@ def allocAssoc($sym; $environ; $mem): alloc($mem) as {$mem, $loc} |
   {$environ, $mem} | .environ |= (. + {"\($sym)": $loc});
 
 # in ENV; out: MEM - this is used to convert a `let` behaviour to `letrec`-like behaviour
-def recursiveEnv($mem):
-  (.) as $env |
+def recursiveEnv($mem): (.) as $env |
   to_entries | map(
     (.key) as $k | (.value) as $loc |
     ($loc | fetch($mem)) as $V |
     select($V | has("lambda")) |
-    ($V | .lambda.environ |= ($env)) as $updated |
+    ($V | .lambda.environ |= $env) as $updated |
     {$loc, $updated}
   ) |
-  reduce .[] as {$loc, $updated} ($mem; . | (.[$loc] |= {V: $updated}))
+  reduce .[] as {$loc, $updated} ($mem; .[$loc] |= {V: $updated})
 ;
 
 def eval(environ; $mem):
@@ -112,37 +111,22 @@ def eval(environ; $mem):
       $args | apply($f; $mem)
     end
 
-  elif (isQQ and (.QQ|isConsL)) then .QQ | reduce (consL2Arr|reverse[]) as $i (
-      {$mem, V: null}; (.mem) as $mem |
-      if ($i | isUQ) then
-        ($i.UQ | eval(environ; $mem)) as {$mem, $V} |
-        .mem = $mem |
-        .V |= {car: $V, cdr: .}
-      else
-        .V |= {car: $i, cdr: .}
-      end
-    )
   elif (isQQ and (.QQ|isCons)) then .QQ | {car,cdr} | reduce to_entries[] as {$key, $value} (
       {$mem, V: {}}; (.mem) as $mem |
-      ($value | if (isUQ) then .UQ | eval(environ; $mem) else {$mem, V: .} end) as {$mem, $V} |
+      ($value | if (isUQ) then .UQ else {QQ: .} end | eval(environ; $mem)) as {$mem, $V} |
       .V[$key] = $V | .mem = $mem)
   elif (isQQ) then {$mem, V: .QQ }
   elif (isUQ) then error("unqoute: not in quasiquote: [\(show)]")
 
-  else
-    "SYNTAX ERROR: \(.)" | error
-  end
+  else "SYNTAX ERROR: \(.)" | error end
 ; # END of `eval`!
 
-# in: [Str]; out: {$environ, $mem} # where $environ is a Map[Str->Loc], $mem is an array
-def initBuiltins: reduce .[] as $name (
-  {environ: {}, mem: []}; (.environ) as $environ | (.mem) as $mem |
-  {builtIn: $name} | allocAssoc($name; $environ; $mem));
-
-def initEnv:
-  (["+", "-", "*", "/", ">=", ">", "<=", "<", "=",
-    "equal?", "empty?", "car", "cons", "cdr", "list"
-   ] | initBuiltins);
+# out: {$environ, $mem} # where $environ is a Map[Str->Loc], $mem is an array
+def initEnv: ["+", "-", "*", "/", ">=", ">", "<=", "<", "=",
+	      "equal?", "empty?", "car", "cons", "cdr", "list"] |
+  reduce .[] as $name (
+    {environ: {}, mem: []}; (.environ) as $environ | (.mem) as $mem |
+    {builtIn: $name} | allocAssoc($name; $environ; $mem));
 
 def evalAllGlobal($environ; $mem):
   def evalDefine($environ; $mem; $sym):  # OUT: {$environ, $mem, $V}
@@ -153,7 +137,7 @@ def evalAllGlobal($environ; $mem):
     ($sxpr) as {car: {SYM: $define},
                 cdr: {car: {SYM: $sym}, cdr: {car: $vsxpr}}} | # FIXME: assuming single expressions
     ($sxpr) as {car: {SYM: $fdefine},
-                cdr: {car: {car: {SYM: $fsym}, cdr: { car: $formal, cdr: $formals} },
+                cdr: {car: {car: {SYM: $fsym}, cdr: {car: $formal, cdr: $formals}},
                       cdr: {car: $bodySxpr}}} |
     if (($define == "define") and ($sym|type == "string") and ($vsxpr != null)) then
       $vsxpr | evalDefine($environ; $mem; $sym)

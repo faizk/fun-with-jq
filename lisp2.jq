@@ -153,7 +153,10 @@ def evalAllGlobal($environ; $mem):
     end
   );
 
-def readEvalAllGlobal: sxprsP |
+# in: Str; out: [{rest: Str, a: ?}]; a parser, but will warn on unconsumed input
+def sxprL: sxprsP | map((.) as $it | if (.rest|length>=1) then
+  "[WARN] discarded trailing input: >>\(.rest)<<" | debug | $it else $it end);
+def readEvalAllGlobal: sxprL |
   if (length >= 1) then .[].a else "parse error (somewhere, sorry)" | error end |
   (initEnv) as {$environ, $mem} | evalAllGlobal($environ; $mem);
 

@@ -1,5 +1,4 @@
 include "sxpr";
-include "sxpr-pc";
 include "lisp2"; include "console-utils";
 
 def showV: show |
@@ -40,7 +39,7 @@ def REPL(cfgF):
     .ready = [] | .problems = [] |
     if ($line | trimmed(" ") | length >= 1) then
       .buffer |= (. + [$line]) | .ready = [] |
-      (.buffer|join("\n") | sxprsP) as $read |
+      (.buffer|join("\n") | sxprL) as $read |
       if ($read|length >= 1) then
         .buffer = [] | . +
         try

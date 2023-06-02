@@ -1,4 +1,6 @@
-include "pc"; include "sxpr"; include "lisp2"; include "console-utils";
+include "sxpr";
+include "sxpr-pc";
+include "lisp2"; include "console-utils";
 
 def showV: show |
   if (type == "object" and has("lambda")) then
@@ -19,7 +21,6 @@ def REPL($interactive):
   def msgLn($s): "\($s)\n";
   def prompt($s): if ($interactive) then $s|fmt(.BLUE.FG, .BOLD) else empty end;
   def prompt: prompt("?> ");
-  def sxprLP: delimited(sxprP; oneOrMore(ws));
   if ($interactive) then msgLn(
     ";; Welcome! This is a rudimentary implementation of a Scheme interpreter"+
     " - in \( "jq"|fmt(.ITALIC, .GREEN.FG))!" | fmt(.REVERSE, .BOLD))
@@ -34,7 +35,7 @@ def REPL($interactive):
     .ready = [] | .problems = [] |
     if ($line | trimmed(" ") | length >= 1) then
       .buffer |= (. + [$line]) | .ready = [] |
-      (.buffer|join("\n") | sxprLP) as $read |
+      (.buffer|join("\n") | sxprsP) as $read |
       if ($read|length >= 1) then
         .buffer = [] | . +
         try

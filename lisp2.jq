@@ -1,4 +1,5 @@
-include "pc"; include "sxpr";
+include "sxpr";
+include "sxpr-pc";
 
 def assumeArity(cond; $msg): if (length | cond) then . else error("arity mismatch: given \(length) for expected \($msg)") end;
 def assumeArityEq($expected): assumeArity(. == $expected; $expected);
@@ -152,7 +153,7 @@ def evalAllGlobal($environ; $mem):
     end
   );
 
-def readEvalAllGlobal: oneOrMore(ws(sxprP)) |
+def readEvalAllGlobal: sxprsP |
   if (length >= 1) then .[].a else "parse error (somewhere, sorry)" | error end |
   (initEnv) as {$environ, $mem} | evalAllGlobal($environ; $mem);
 

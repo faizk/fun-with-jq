@@ -37,9 +37,9 @@ def Sxpr:
   Atom // Pair // List // (Q // QQ // UQ)
 ;
 
-def pcCompact(E; f): {remainder: ., result: []} |
+def pcCompat(E; f): {remainder: ., result: []} |
   [E | {a: (.result|f), rest: (.remainder)}];
 
 # Public interface
-def sxprP: pcCompact(Sxpr; .[]);
-def sxprsP: pcCompact(Sxpr | star(ws1p |Sxpr); .);
+def sxprP: pcCompat(Sxpr; .[]);
+def sxprsP: pcCompat(ws0p | Sxpr | star(ws1p |Sxpr | ws0p); .);

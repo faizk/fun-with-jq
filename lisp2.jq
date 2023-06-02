@@ -1,5 +1,6 @@
 include "sxpr";
 include "sxpr-pc";
+# include "sxpr-peg";
 
 def assumeArity(cond; $msg): if (length | cond) then . else error("arity mismatch: given \(length) for expected \($msg)") end;
 def assumeArityEq($expected): assumeArity(. == $expected; $expected);

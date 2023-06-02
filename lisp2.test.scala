@@ -18,7 +18,10 @@ class Lisp2_bInJqTests extends Lisp2AbstractTests with TestFunctions {
   import scala.sys.process._
 
   val jqRead = """
-    include "sxpr"; sxprP[].a | show
+    include "sxpr";
+    include "sxpr-pc";
+    #include "sxpr-peg";
+    sxprP[].a | show
   """
   val jqEval = """
     include "lisp2"; readEvalAll

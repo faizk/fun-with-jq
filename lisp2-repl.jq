@@ -4,10 +4,12 @@ include "lisp2"; include "console-utils";
 
 def showV: show |
   if (type == "object" and has("lambda")) then
+    def showBody: (20) as $max | show |
+      if (length >= $max) then .[0:$max] | "\(.)..)" else . end;
     (initEnv) as {$environ, $mem} |
     .lambda | (.fargs   |= join(" ") |
                .environ |= (with_entries(select($environ[.key]==null))) |
-               .body    |= show) |
+               .body    |= showBody) |
     "(λ (\(.fargs)) \(.body))" as $l |
     "\($l | ansiFmt(.UNDERLINE, .GREEN.FG)) >>[env (sans built-ins): \(.environ|ansiFmt(.GREEN.BG, .WHITE.FG))]<<"
   else ansiFmt(.GREEN.FG, .UNDERLINE) end;

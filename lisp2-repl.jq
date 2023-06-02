@@ -16,12 +16,15 @@ def trimmedR($s): [. | until(endswith($s) | not; rtrimstr($s))]   | last;
 def trimmedL($s): [. | until(startswith($s) | not; ltrimstr($s))] | last;
 def trimmed($s): trimmedL($s) | trimmedR($s);
 
-def REPL($interactive):
-  def fmt(p): if ($interactive) then ansiFmt(p) else . end;
+def REPL(cfgF):
+  { interactive: true,
+  } as $defaults |
+  def interactive: $defaults | cfgF | .interactive;
+  def fmt(p): if (interactive) then ansiFmt(p) else . end;
   def msgLn($s): "\($s)\n";
-  def prompt($s): if ($interactive) then $s|fmt(.BLUE.FG, .BOLD) else empty end;
+  def prompt($s): if (interactive) then $s|fmt(.BLUE.FG, .BOLD) else empty end;
   def prompt: prompt("?> ");
-  if ($interactive) then msgLn(
+  if (interactive) then msgLn(
     ";; Welcome! This is a rudimentary implementation of a Scheme interpreter"+
     " - in \( "jq"|fmt(.ITALIC, .GREEN.FG))!" | fmt(.REVERSE, .BOLD))
   else empty end,
@@ -48,10 +51,10 @@ def REPL($interactive):
     (if (.problems | length >= 1) then
        (.problems[] | ("[ERROR] \(.)" | fmt(.RED.BG, .WHITE.FG)), "\n")
      else empty end),
-    (.ready[] | (showV | if ($interactive) then . else sansCtrl end),
+    (.ready[] | (showV | if (interactive) then . else sansCtrl end),
       "\n"),
     (if (.buffer| length == 0) then prompt else prompt(".. ") end)
   ),
-  if ($interactive) then "BYE!" | ansiFmt(.BLUE.FG, .BOLD) else empty end;
+  if (interactive) then "BYE!" | ansiFmt(.BLUE.FG, .BOLD) else empty end;
 
-def REPL: REPL(true);
+def REPL: REPL(.interactive = true);

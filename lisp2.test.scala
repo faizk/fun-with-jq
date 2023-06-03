@@ -7,73 +7,72 @@
 package tut
 
 import cats._, data._, syntax.all._
-import org.scalacheck._, Prop._, Arbitrary.arbitrary, org.scalacheck.Prop.propBoolean
-import org.scalacheck.effect.PropF.forAllF
 import cats.effect.Resource
 import cats.effect.{IO, SyncIO}
-
+import monix.catnap.MVar
+import monix.eval.Task
+import monix.execution.Scheduler
+import monix.reactive.Observable
 import munit.{ CatsEffectSuite, ScalaCheckEffectSuite }
+import org.scalacheck._, Prop._, Arbitrary.arbitrary, org.scalacheck.Prop.propBoolean
+import org.scalacheck.effect.PropF.forAllF
 
-object faster {
+object jqRcr {
 
-  import monix.eval.Task
-  import monix.reactive.Observable
-  import monix.catnap.MVar
-  import monix.execution.Scheduler
-
-  import java.io.{ InputStream, OutputStream }
-  import java.io.BufferedReader
-  import java.io.InputStreamReader
-  import scala.concurrent.Future
-  import scala.concurrent.Promise
+  import java.io.{ BufferedReader, InputStream, InputStreamReader }
   import scala.concurrent.duration._
   import scala.sys.process._
 
-  type Channel = MVar[Task, Option[String]]
+  type Channel = MVar[Task, String]
 
-  class JqRcr(code: String, timeout: FiniteDuration, inCh: Channel, outCh: Channel)
+  class JqRcr(code: Seq[Char], timeout: FiniteDuration, inCh: Channel, outCh: Channel, errCh: Channel)
              (implicit sched: Scheduler) {
     val proc: Task[Process] = Task {
-      Seq("jq", "-Rcr", code) run {
-        BasicIO.standard(true)
-          .withInput { os =>
-            def loop: Task[Unit] = inCh.take.flatMap {
-              case Some(s) =>
-                val payload = (s.replace("\n", " ") ++ "\n").getBytes
-                Task.eval(os.write(payload)) *> loop
-              case None =>
-                Task.unit
+      Seq("jq", "-Rcr", "--unbuffered", code.mkString) run new ProcessIO(
+          writeInput = { os =>
+            def loop: Task[Unit] = inCh.take.flatMap { s =>
+              val payload = (s.replace("\n", " ") ++ "\n").getBytes
+              Task.eval(os.write(payload)) *>
+              Task.eval(os.flush()) *> loop
             }
             loop
               .guarantee(Task.eval(os.close()))
               .runSyncUnsafe(timeout)
-          }
-          .withOutput { is =>
-            Observable
-              .fromLinesReader(Task(new BufferedReader(new InputStreamReader(is))))
-              .guarantee(Task(is.close()))
-              .mapEval { line => outCh.put(Some(line)) }
-              .completedL
-              .runSyncUnsafe(timeout)
-          }
-        }
+          },
+          processOutput = mkReader(outCh),
+          processError = mkReader(errCh),
+          daemonizeThreads = true
+        )
     }
-    def send(input: String): Task[Option[String]] =
+    def mkReader(ch: Channel): InputStream => Unit = { is => Observable
+      .fromLinesReader(Task(new BufferedReader(new InputStreamReader(is))))
+      .guarantee(Task(is.close()))
+      .mapEval { ch.put }
+      .completedL
+      .runSyncUnsafe(timeout)
+    }
+
+    def send(input: Seq[Char]): Task[Either[String, String]] =
       for {
-        _ <- inCh.put(Some(input))
-        o <- outCh.take
-      } yield o
+        _ <- Task(println(s"input: $input"))
+        _ <- inCh.put(input.mkString)
+        _ <- Task(println("did put"))
+        r <- Task.race(errCh.take, outCh.take)
+        _ <- Task(println(s"got: $r"))
+      } yield r
   }
 
   object JqRcr {
-    def start(code: String)(implicit s: Scheduler): Task[JqRcr] =
+    def start(code: Seq[Char])(implicit s: Scheduler): Task[JqRcr] =
       for {
-        inCh  <- MVar[Task].empty[Option[String]]()
-        outCh <- MVar[Task].empty[Option[String]]()
-        jqRcr <- Task(new JqRcr(code, 10.seconds, inCh, outCh))
+        inCh  <- MVar[Task].empty[String]()
+        outCh <- MVar[Task].empty[String]()
+        errCh <- MVar[Task].empty[String]()
+        jqRcr <- Task(new JqRcr(code, 2.minutes, inCh, outCh, errCh))
+        p     <- jqRcr.proc
+        _     <- Task(System.err.println(s"[INFO]: jq -Rcr proc: $p"))
       } yield jqRcr
   }
-
 }
 
 trait TestFunctions {
@@ -85,7 +84,8 @@ trait TestFunctions {
 class Lisp2_bInJqTests extends Lisp2AbstractTests with TestFunctions {
   import lisp2._
   import pc2utils._
-  import scala.sys.process._
+
+  import monix.execution.Scheduler.Implicits.global
 
   val jqRead = """
     include "sxpr";
@@ -97,10 +97,6 @@ class Lisp2_bInJqTests extends Lisp2AbstractTests with TestFunctions {
     include "lisp2"; readEvalAll
   """
 
-  val jqSlurpCmd = Seq("jq", "-Rs", "-cr")
-
-  def inps(s: Seq[Char]) = new java.io.ByteArrayInputStream(s.mkString.getBytes)
-
   val jqErrRe = """^jq: error \(at <stdin>:[0-9]+\):\s*(.+)""".r
   val jqStderrRe = """^"(.+)"""".r
   val stripJqErrorPrefix: String => String = {
@@ -109,20 +105,19 @@ class Lisp2_bInJqTests extends Lisp2AbstractTests with TestFunctions {
     case whatever        => whatever
   }
 
-  def jqSlurp(code: String, input: Seq[Char]): Either[Err, Seq[Char]] = {
-    val outb = new StringBuilder
-    val errb = new StringBuilder
-    val logger = ProcessLogger(outb append _, errb append _)
-    ((jqSlurpCmd :+ code) #< inps(input)) ! logger match {
-      case 0 if errb.isEmpty => outb.toSeq.asRight
-      case 0 => System.err.println(errb.mkString); outb.toSeq.asRight
-      case e if errb.isEmpty => s"[exit $e] jq failed: >>>$code<<<, input: $input".asLeft
-      case e => errb.mkString.asLeft.leftMap(stripJqErrorPrefix)
-    }
-  }
+  val jqRcrReadFix = ResourceSuiteLocalFixture("jqRrc-read",
+    Resource.make(jqRcr.JqRcr.start(jqRead).to[IO])(_ => IO.unit)
+  )
+  val jqRcrReadAllEvalFix = ResourceSuiteLocalFixture("jqRrc-readAllEval",
+    Resource.make(jqRcr.JqRcr.start(jqEval).to[IO])(_ => IO.unit)
+  )
 
-  lazy val readFriendly = in => IO(jqSlurp(jqRead, in) >>= lisp2.readP.friendly)
-  lazy val evalFriendly = in => IO(jqSlurp(jqEval, in) >>= lisp2.readP.friendly)
+  override def munitFixtures: Seq[Fixture[_]] = List(jqRcrReadFix, jqRcrReadAllEvalFix)
+
+  lazy val readFriendly = in => jqRcrReadFix()
+    .send(in).map(_ map (_.toSeq) >>= lisp2.readP.friendly).to[IO]
+  lazy val evalFriendly = in => jqRcrReadAllEvalFix()
+    .send(in).map(_ map (_.toSeq) >>= lisp2.readP.friendly).to[IO]
 }
 
 class Lisp2_aTests extends Lisp2AbstractTests with TestFunctions {
@@ -252,7 +247,7 @@ abstract class Lisp2AbstractTests extends CatsEffectSuite with ScalaCheckEffectS
     """ -> "unqoute: not in quasiquote: [,2]".asLeft)
   test("qq like q without uq") {
     forAllF { (e: Sxpr) =>
-      (eval(show"'$e"), eval(show"`$e")).parMapN { case (l,r) => assertEquals(l, r) }
+      (eval(show"'$e"), eval(show"`$e")).mapN { case (l,r) => assertEquals(l, r) }
     }
   }
   checkOK("qq like q without", """

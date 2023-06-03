@@ -1,22 +1,25 @@
 //> using test.dep org.scalameta::munit::0.7.29
 //> using test.dep org.scalameta::munit-scalacheck:0.7.29
 //> using test.dep org.typelevel::munit-cats-effect-2:1.0.7
+//> using test.dep org.typelevel::scalacheck-effect:1.0.4
+//> using test.dep org.typelevel::scalacheck-effect-munit:1.0.4
 
 package tut
 
 import cats._, data._, syntax.all._
 import org.scalacheck._, Prop._, Arbitrary.arbitrary, org.scalacheck.Prop.propBoolean
-import monix.execution.Scheduler
+import org.scalacheck.effect.PropF.forAllF
 import cats.effect.Resource
 import cats.effect.{IO, SyncIO}
-import munit.{ CatsEffectSuite, ScalaCheckSuite }
 
+import munit.{ CatsEffectSuite, ScalaCheckEffectSuite }
 
 object faster {
 
   import monix.eval.Task
   import monix.reactive.Observable
   import monix.catnap.MVar
+  import monix.execution.Scheduler
 
   import java.io.{ InputStream, OutputStream }
   import java.io.BufferedReader
@@ -129,7 +132,7 @@ class Lisp2_aTests extends Lisp2AbstractTests with TestFunctions {
   lazy val evalFriendly = readFriendly andThen (_ map (_ flatMap (lisp2.eval(_))))
 }
 
-abstract class Lisp2AbstractTests extends CatsEffectSuite with ScalaCheckSuite with TestFunctions {
+abstract class Lisp2AbstractTests extends CatsEffectSuite with ScalaCheckEffectSuite with TestFunctions {
   import lisp2._
   import Lisp2PropTests._
 
@@ -137,24 +140,24 @@ abstract class Lisp2AbstractTests extends CatsEffectSuite with ScalaCheckSuite w
 
   val eval = evalFriendly
 
-  property("all s-expressions can be parsed") {
-    forAll { (e: Sxpr) =>
-      assertEquals(readFriendly(e.show).unsafeRunSync(), Right(e))
+  test("all s-expressions can be parsed") {
+    forAllF { (e: Sxpr) =>
+      readFriendly(e.show) assertEquals Right(e)
     }
- }
+  }
 
-  property("all s-expressions can be parsed, even when cons-list rendering is off") {
+  test("all s-expressions can be parsed, even when cons-list rendering is off") {
     implicit val rPrefs = ShowPrefs(renderConsList = false)
-    forAll { (e: Sxpr) =>
-      assertEquals(readFriendly(e.show).unsafeRunSync(), Right(e))
+    forAllF { (e: Sxpr) =>
+      readFriendly(e.show) assertEquals Right(e)
     }
   }
 
 
-  property("built-in `empty?` considers only `'()` as empty") {
-    forAll { (e: Sxpr) =>
+  test("built-in `empty?` considers only `'()` as empty") {
+    forAllF { (e: Sxpr) =>
       val empty = eval(show"(empty? '$e)")
-      assertEquals(empty.unsafeRunSync(), Right(Lit(e == NIL)))
+      empty assertEquals Right(Lit(e == NIL))
     }
   }
 
@@ -247,10 +250,9 @@ abstract class Lisp2AbstractTests extends CatsEffectSuite with ScalaCheckSuite w
   check("uq not in qq", """
     (+ 1 ,2)
     """ -> "unqoute: not in quasiquote: [,2]".asLeft)
-  property("qq like q without uq") {
-    forAll { (e: Sxpr) =>
-      (eval(show"'$e"), eval(show"`$e")).parMapN { case (l,r) => l == r }
-        .unsafeRunSync()
+  test("qq like q without uq") {
+    forAllF { (e: Sxpr) =>
+      (eval(show"'$e"), eval(show"`$e")).parMapN { case (l,r) => assertEquals(l, r) }
     }
   }
   checkOK("qq like q without", """

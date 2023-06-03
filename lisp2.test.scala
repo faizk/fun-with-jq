@@ -1,15 +1,82 @@
 //> using test.dep org.scalameta::munit::0.7.29
 //> using test.dep org.scalameta::munit-scalacheck:0.7.29
+//> using test.dep org.typelevel::munit-cats-effect-2:1.0.7
 
 package tut
 
 import cats._, data._, syntax.all._
 import org.scalacheck._, Prop._, Arbitrary.arbitrary, org.scalacheck.Prop.propBoolean
+import monix.execution.Scheduler
+import cats.effect.Resource
+import cats.effect.{IO, SyncIO}
+import munit.{ CatsEffectSuite, ScalaCheckSuite }
+
+
+object faster {
+
+  import monix.eval.Task
+  import monix.reactive.Observable
+  import monix.catnap.MVar
+
+  import java.io.{ InputStream, OutputStream }
+  import java.io.BufferedReader
+  import java.io.InputStreamReader
+  import scala.concurrent.Future
+  import scala.concurrent.Promise
+  import scala.concurrent.duration._
+  import scala.sys.process._
+
+  type Channel = MVar[Task, Option[String]]
+
+  class JqRcr(code: String, timeout: FiniteDuration, inCh: Channel, outCh: Channel)
+             (implicit sched: Scheduler) {
+    val proc: Task[Process] = Task {
+      Seq("jq", "-Rcr", code) run {
+        BasicIO.standard(true)
+          .withInput { os =>
+            def loop: Task[Unit] = inCh.take.flatMap {
+              case Some(s) =>
+                val payload = (s.replace("\n", " ") ++ "\n").getBytes
+                Task.eval(os.write(payload)) *> loop
+              case None =>
+                Task.unit
+            }
+            loop
+              .guarantee(Task.eval(os.close()))
+              .runSyncUnsafe(timeout)
+          }
+          .withOutput { is =>
+            Observable
+              .fromLinesReader(Task(new BufferedReader(new InputStreamReader(is))))
+              .guarantee(Task(is.close()))
+              .mapEval { line => outCh.put(Some(line)) }
+              .completedL
+              .runSyncUnsafe(timeout)
+          }
+        }
+    }
+    def send(input: String): Task[Option[String]] =
+      for {
+        _ <- inCh.put(Some(input))
+        o <- outCh.take
+      } yield o
+  }
+
+  object JqRcr {
+    def start(code: String)(implicit s: Scheduler): Task[JqRcr] =
+      for {
+        inCh  <- MVar[Task].empty[Option[String]]()
+        outCh <- MVar[Task].empty[Option[String]]()
+        jqRcr <- Task(new JqRcr(code, 10.seconds, inCh, outCh))
+      } yield jqRcr
+  }
+
+}
 
 trait TestFunctions {
   import lisp2._
-  val readFriendly: Seq[Char] => Either[Err, Sxpr]
-  val evalFriendly: Seq[Char] => Either[Err, Value]
+  val readFriendly: Seq[Char] => IO[Either[Err, Sxpr]]
+  val evalFriendly: Seq[Char] => IO[Either[Err, Value]]
 }
 
 class Lisp2_bInJqTests extends Lisp2AbstractTests with TestFunctions {
@@ -51,18 +118,18 @@ class Lisp2_bInJqTests extends Lisp2AbstractTests with TestFunctions {
     }
   }
 
-  lazy val readFriendly = in => jqSlurp(jqRead, in) >>= lisp2.readP.friendly
-  lazy val evalFriendly = in => jqSlurp(jqEval, in) >>= lisp2.readP.friendly
+  lazy val readFriendly = in => IO(jqSlurp(jqRead, in) >>= lisp2.readP.friendly)
+  lazy val evalFriendly = in => IO(jqSlurp(jqEval, in) >>= lisp2.readP.friendly)
 }
 
 class Lisp2_aTests extends Lisp2AbstractTests with TestFunctions {
   import lisp2._
   import pc2utils._
-  lazy val readFriendly = lisp2.readP.friendly
-  lazy val evalFriendly = readFriendly andThenF (lisp2.eval(_))
+  lazy val readFriendly = in => IO(lisp2.readP.friendly(in))
+  lazy val evalFriendly = readFriendly andThen (_ map (_ flatMap (lisp2.eval(_))))
 }
 
-abstract class Lisp2AbstractTests extends munit.ScalaCheckSuite with TestFunctions {
+abstract class Lisp2AbstractTests extends CatsEffectSuite with ScalaCheckSuite with TestFunctions {
   import lisp2._
   import Lisp2PropTests._
 
@@ -72,14 +139,14 @@ abstract class Lisp2AbstractTests extends munit.ScalaCheckSuite with TestFunctio
 
   property("all s-expressions can be parsed") {
     forAll { (e: Sxpr) =>
-      assertEquals(readFriendly(e.show), Right(e))
+      assertEquals(readFriendly(e.show).unsafeRunSync(), Right(e))
     }
  }
 
   property("all s-expressions can be parsed, even when cons-list rendering is off") {
     implicit val rPrefs = ShowPrefs(renderConsList = false)
     forAll { (e: Sxpr) =>
-      assertEquals(readFriendly(e.show), Right(e))
+      assertEquals(readFriendly(e.show).unsafeRunSync(), Right(e))
     }
   }
 
@@ -87,7 +154,7 @@ abstract class Lisp2AbstractTests extends munit.ScalaCheckSuite with TestFunctio
   property("built-in `empty?` considers only `'()` as empty") {
     forAll { (e: Sxpr) =>
       val empty = eval(show"(empty? '$e)")
-      assertEquals(empty, Right(Lit(e == NIL)))
+      assertEquals(empty.unsafeRunSync(), Right(Lit(e == NIL)))
     }
   }
 
@@ -98,7 +165,7 @@ abstract class Lisp2AbstractTests extends munit.ScalaCheckSuite with TestFunctio
   def check(name: String, expectation: Expect, expectations: Expect*)(implicit loc: munit.Location): Unit =
     test(name) {
       for ((in, value) <- (expectation :: expectations.toList))
-        assertEquals(eval(in), value)
+        eval(in) assertEquals value
     }
 
   checkOK("number", "331" -> Lit(331))
@@ -141,8 +208,8 @@ abstract class Lisp2AbstractTests extends munit.ScalaCheckSuite with TestFunctio
   checkOK("lambda arity-2", "((lambda (x y) (+ y x)) 2 3)" -> Lit(5))
 
   check("bodiless lambdas aren't", "(lambda (x))" -> "undefined variable: [lambda]".asLeft)
-  test("[TODO] bodiless lambdas aren't".fail){
-    assert(clue(eval("(lambda (x))").swap).exists(_ contains "syntax error"))
+  test("[TODO] bodiless lambdas aren't".fail) {
+    assertIOBoolean(eval("(lambda (x))") map (_.swap.exists(_ contains "syntax error")))
   }
 
   checkOK("simple if/else", "(if (= 1 2) 'y 'n)" -> Sym("n"))
@@ -168,7 +235,7 @@ abstract class Lisp2AbstractTests extends munit.ScalaCheckSuite with TestFunctio
   )
 
   test("lexical scope") {
-    assertEquals(
+    assertIO(
       eval(
         """
         (let ((y 1))
@@ -182,7 +249,8 @@ abstract class Lisp2AbstractTests extends munit.ScalaCheckSuite with TestFunctio
     """ -> "unqoute: not in quasiquote: [,2]".asLeft)
   property("qq like q without uq") {
     forAll { (e: Sxpr) =>
-      assertEquals(eval(show"'$e"), eval(show"`$e"))
+      (eval(show"'$e"), eval(show"`$e")).parMapN { case (l,r) => l == r }
+        .unsafeRunSync()
     }
   }
   checkOK("qq like q without", """

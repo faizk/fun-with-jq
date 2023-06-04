@@ -42,4 +42,4 @@ def pcCompat(E; f): {remainder: ., result: []} |
 
 # Public interface
 def sxprP: pcCompat(Sxpr; .[]);
-def sxprsP: pcCompat(ws0p | Sxpr | star(ws1p |Sxpr | ws0p); .);
+def sxprsP: pcCompat(ws0p | Sxpr | star(ws1p |Sxpr) | ws0p; .);

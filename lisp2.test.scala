@@ -29,20 +29,20 @@ object jqRcr {
              (implicit sched: Scheduler) {
     val proc: Task[Process] = Task {
       Seq("jq", "-Rcr", "--unbuffered", code.mkString) run new ProcessIO(
-          writeInput = { os =>
-            def loop: Task[Unit] = inCh.take.flatMap { s =>
-              val payload = (s.replace("\n", " ") ++ "\n").getBytes
-              Task.eval(os.write(payload)) *>
-              Task.eval(os.flush()) *> loop
-            }
-            loop
-              .guarantee(Task.eval(os.close()))
-              .runSyncUnsafe(timeout)
-          },
-          processOutput = mkReader(outCh),
-          processError = mkReader(errCh),
-          daemonizeThreads = true
-        )
+        writeInput = { os =>
+          def loop: Task[Unit] = inCh.take.flatMap { s =>
+            val payload = (s.replace("\n", " ") ++ "\n").getBytes
+            Task.eval(os.write(payload)) *>
+            Task.eval(os.flush()) *> loop
+          }
+          loop
+            .guarantee(Task.eval(os.close()))
+            .runSyncUnsafe(timeout)
+        },
+        processOutput = mkReader(outCh),
+        processError = mkReader(errCh),
+        daemonizeThreads = true
+      )
     }
     def mkReader(ch: Channel): InputStream => Unit = { is => Observable
       .fromLinesReader(Task(new BufferedReader(new InputStreamReader(is))))

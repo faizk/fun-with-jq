@@ -1,3 +1,56 @@
+## Scheme in `jq`!
+
+```scheme
+; let's test this:
+(define (f x) (+ x 1))
+(define map (lambda (f l) 
+              (if (empty? l) l 
+                (cons (f (car l)) 
+                      (map f (cdr l)))))) 
+ 
+
+(map f '(2 3 4))
+```
+
+Type that into a REPL:
+
+```bash
+rlwrap jq -nRr 'include "lisp2-repl"; REPL'
+```
+
+(or just simple stuff like `(+ 1 2)`, etc) 
+
+In batch mode:
+
+```bash
+jq -sRr 'include "lisp2"; readEvalAll' <<LISP
+(define x 77)
+(+ 1 2 x)
+LISP
+```
+> output
+```
+80
+```
+
+Define a `map` function, and use it (shows recursion, lexical scoping, etc in action):
+
+```bash
+jq -sRr 'include "lisp2"; readEvalAll' <<LISP
+(define (f x) (+ x 1))
+
+(define map (lambda (f l) 
+              (if (empty? l) l 
+                (cons (f (car l)) 
+                      (map f (cdr l)))))) 
+
+(map f '(2 3 4))
+LISP
+```
+> output:
+```scheme
+(3 4 5)
+```
 
 ## Pre-Reqs
 
